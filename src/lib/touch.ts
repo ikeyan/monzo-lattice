@@ -11,7 +11,7 @@
  *   記憶は和音が完全に終わる (idle に戻る) まで保持するので、再タッチした指は
  *   元の時刻で底音を取り戻す。
  * - セル移動 (§6.4): 移動先セルの枠から 3% より中に入って初めて移動と判定。
- *   発音中の移動は即時に和音を変える (バッチしない)。
+ *   発音中の移動も down/up と同様に窓を開いてバッチする (§6.2)。
  * - パン (§6.6): タッチなしの状態から開いた窓の間に、単独の指が閾値を超えて
  *   動いたら和音を作らずパンに切り替える。
  */
@@ -50,7 +50,7 @@ export type GestureState = Readonly<{
   firstTouchTimes: ReadonlyMap<number, number>;
   /** タッチ中の指 → 対象セル */
   active: ReadonlyMap<number, TouchTarget>;
-  /** 発音中の和音 (バッチ確定済み)。§6.4 の移動だけは即時反映される */
+  /** 発音中の和音 (バッチ確定済み) */
   committed: Chord | null;
   /** この窓が §6.6 のパン開始になりうるか (idle から単指で開いた窓のみ) */
   panEligible: boolean;
@@ -250,8 +250,15 @@ const onMove = (
   if (sameTarget(next, current)) return still(state);
   const active = mapSet(state.active, event.pointerId, next);
   if (state.mode === "sounding") {
-    // §6.4: 発音中の移動は即時反映
-    return still({ ...state, active, committed: chordOf(active, state.firstTouchTimes) });
+    // §6.2: 移動による和音変更もバッチする。新しい窓を開き、窓の間は前の和音が鳴り続ける
+    return still({
+      ...state,
+      mode: "pending",
+      windowEndsAt: event.at + config.batchMs,
+      active,
+      panEligible: false,
+      firstDown: null,
+    });
   }
   return still({ ...state, active });
 };

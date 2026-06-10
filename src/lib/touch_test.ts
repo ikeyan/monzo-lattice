@@ -155,22 +155,39 @@ Deno.test("2 本以上タッチした窓ではパンに切り替わらない (§
   assertEquals(result.pans, []);
 });
 
-Deno.test("発音中のセル移動は即時に和音を変える (§6.4)", () => {
-  const moved = run([
+Deno.test("発音中のセル移動はバッチされ、窓の終わりに和音が変わる (§6.2, §6.4)", () => {
+  const slide = [
     down(1, 0, 0, 0),
     tick(100),
     moveAt(1, 510, 300, 200), // セル (1,0) の枠から 10px (3% = 3px 以上) 内側
-  ]);
-  assertEquals(moved.state.committed?.notes, [{ target: { x3: 1, yp: 0 }, fingerIds: [1] }]);
-  assertEquals(moved.state.mode, "sounding");
+  ];
+  const during = run([...slide, tick(250)]); // 窓 (200〜300) の途中
+  assertEquals(during.state.mode, "pending");
+  assertEquals(during.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
+  const after = run([...slide, tick(300)]);
+  assertEquals(after.state.mode, "sounding");
+  assertEquals(after.state.committed?.notes, [{ target: { x3: 1, yp: 0 }, fingerIds: [1] }]);
 });
 
-Deno.test("マージンより浅い移動ではセルが変わらない (§6.4)", () => {
+Deno.test("移動で開いた窓は後続の移動で延長されない (§6.2)", () => {
+  const { state } = run([
+    down(1, 0, 0, 0),
+    tick(100),
+    moveAt(1, 510, 300, 200), // (1,0) へ。窓は 200〜300
+    moveAt(1, 610, 300, 290), // 窓の中でさらに (2,0) へ
+    tick(300),
+  ]);
+  assertEquals(state.mode, "sounding");
+  assertEquals(state.committed?.notes, [{ target: { x3: 2, yp: 0 }, fingerIds: [1] }]);
+});
+
+Deno.test("マージンより浅い移動ではセルが変わらず窓も開かない (§6.4)", () => {
   const shallow = run([
     down(1, 0, 0, 0),
     tick(100),
     moveAt(1, 452, 300, 200), // セル (1,0) に入ったが枠から 2px (< 3px)
   ]);
+  assertEquals(shallow.state.mode, "sounding");
   assertEquals(shallow.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
 });
 
