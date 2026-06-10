@@ -43,3 +43,30 @@ export const ratioValue = (m: Monzo): number =>
 /** 格子セル (x, y) の monzo: 3^x * p^y (仕様 §3) */
 export const cellMonzo = (x: number, y: number, p: LatticePrime): Monzo =>
   normalize({ 3: x, [p]: y });
+
+const SUPERSCRIPT_CHARS: Readonly<Record<string, string>> = {
+  "-": "⁻",
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+};
+
+const superscript = (n: number): string =>
+  String(n)
+    .split("")
+    .map((c) => SUPERSCRIPT_CHARS[c] ?? c)
+    .join("");
+
+/** セル表示用の monzo 文字列 (§3)。例: "1", "3·5⁻²", "3⁻¹·7" */
+export const formatMonzo = (m: Monzo): string => {
+  const entries = Object.entries(m).filter(([, e]) => e !== 0);
+  if (entries.length === 0) return "1";
+  return entries.map(([p, e]) => (e === 1 ? p : `${p}${superscript(e)}`)).join("·");
+};

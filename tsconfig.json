@@ -1,4 +1,6 @@
 {
+  // Deno 2.5+ が自動検出して deno check に使う (README「型チェックの構成」参照)。
+  // ブラウザコード専用: テストは exclude され、Deno 既定の設定でチェックされる。
   "compilerOptions": {
     "target": "esnext",
     "module": "esnext",
