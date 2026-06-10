@@ -10,6 +10,10 @@ import { LATTICE_PRIMES, type LatticePrime } from "./monzo.ts";
 export const TIMBRES = ["sine", "triangle", "guitar", "xylophone"] as const;
 export type Timbre = (typeof TIMBRES)[number];
 
+/** セル移動時のノートの扱い (仕様 §6.4) */
+export const NOTE_MOVE_MODES = ["retrigger", "glide"] as const;
+export type NoteMoveMode = (typeof NOTE_MOVE_MODES)[number];
+
 /** 和音遷移時のボイシングの引き継ぎ方 (仕様 §7.4) */
 export const CHORD_TRANSITION_MODES = [
   "independent",
@@ -53,6 +57,10 @@ export type Settings = Readonly<{
   panThresholdCm: number;
   /** ボイシングの広がりすぎペナルティ係数 (§7.2) */
   spreadPenaltyCoeff: number;
+  /** セル移動時のノートの扱い (§6.4) */
+  noteMoveMode: NoteMoveMode;
+  /** f0 変更時 (§2.1) とグライド移動 (§6.4) の音高遷移にかける時間 (ms) */
+  glideTimeMs: number;
   /** 音色 (§8) */
   timbre: Timbre;
   adsr: Adsr;
@@ -81,6 +89,8 @@ export const DEFAULT_SETTINGS: Settings = {
   batchPeriodMs: 100,
   panThresholdCm: 0.5,
   spreadPenaltyCoeff: 1,
+  noteMoveMode: "retrigger",
+  glideTimeMs: 100,
   timbre: "sine",
   adsr: { attackMs: 10, decayMs: 200, sustainLevel: 0.7, releaseMs: 300 },
   reverb: { mix: 0.2, decaySec: 1.5 },
@@ -134,6 +144,8 @@ export const sanitizeSettings = (input: unknown): Settings => {
     batchPeriodMs: clamp(Math.round(num(v["batchPeriodMs"], d.batchPeriodMs) / 10) * 10, 50, 250),
     panThresholdCm: clamp(num(v["panThresholdCm"], d.panThresholdCm), 0.1, 3),
     spreadPenaltyCoeff: clamp(num(v["spreadPenaltyCoeff"], d.spreadPenaltyCoeff), 0, 10),
+    noteMoveMode: pick<NoteMoveMode>(v["noteMoveMode"], NOTE_MOVE_MODES, d.noteMoveMode),
+    glideTimeMs: clamp(num(v["glideTimeMs"], d.glideTimeMs), 0, 2000),
     timbre: pick<Timbre>(v["timbre"], TIMBRES, d.timbre),
     adsr: {
       attackMs: clamp(num(adsr["attackMs"], d.adsr.attackMs), 0, 2000),

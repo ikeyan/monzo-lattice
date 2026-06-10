@@ -45,6 +45,7 @@ export const Lattice = () => {
   const pan = useAtomValue(panAtom);
   const board = useAtomValue(beanBoardAtom);
   const beanDrag = useAtomValue(beanDragAtom);
+  const beanCandidate = useAtomValue(beanDragCandidateAtom);
   const setPan = useSetAtom(panAtom);
   const setChord = useSetAtom(chordAtom);
   const setVoicing = useSetAtom(voicingAtom);
@@ -76,6 +77,8 @@ export const Lattice = () => {
   boardRef.current = board;
   const beanDragRef = useRef(beanDrag);
   beanDragRef.current = beanDrag;
+  const beanCandidateRef = useRef(beanCandidate);
+  beanCandidateRef.current = beanCandidate;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -139,9 +142,14 @@ export const Lattice = () => {
       }),
     );
     const move$ = fromEvent<PointerEvent>(el, "pointermove").pipe(
-      // 豆の D&D に昇格した指の生 move は無視する。さもないと cellWithMargin が
-      // 豆なしのセルを発音させてしまう。発音は BeanDragLayer の合成 down/up が担う (§4.2)
-      filter((e) => beanDragRef.current?.pointerId !== e.pointerId),
+      // 豆の D&D に昇格した指、および昇格しうる候補の指の生 move は無視する。
+      // さもないと cellWithMargin が豆なしのセルを発音させてしまう
+      // (候補も除外するのは、閾値を跨ぐ move が BeanDragLayer の window リスナより
+      // 先に格子要素へ届くレースがあるため)。発音は §4.2 の合成 down/up が担う
+      filter((e) =>
+        beanDragRef.current?.pointerId !== e.pointerId &&
+        beanCandidateRef.current?.pointerId !== e.pointerId
+      ),
       map((e): GestureEvent => ({
         type: "move",
         pointerId: e.pointerId,

@@ -8,6 +8,8 @@ import {
   type ChordTransitionMode,
   F0_MAX_HZ,
   F0_MIN_HZ,
+  NOTE_MOVE_MODES,
+  type NoteMoveMode,
   type Timbre,
   TIMBRES,
 } from "../lib/settings.ts";
@@ -19,6 +21,11 @@ const TRANSITION_LABELS: Readonly<Record<ChordTransitionMode, string>> = {
   independent: "つながりを考慮しない",
   sameMonzoFixed: "同 monzo 固定",
   sameFingerOctave: "同指オクターブ維持",
+};
+
+const NOTE_MOVE_LABELS: Readonly<Record<NoteMoveMode, string>> = {
+  retrigger: "別ノート",
+  glide: "グライド",
 };
 
 const round3 = (x: number): number => Math.round(x * 1000) / 1000;
@@ -178,6 +185,25 @@ export const SettingsDialog = () => {
             step={0.1}
             unit="cm"
             onCommit={(x) => updateSettings({ panThresholdCm: x })}
+          />
+        </Row>
+        <Row label="セル移動時のノート">
+          <select
+            value={settings.noteMoveMode}
+            onChange={(e) =>
+              updateSettings({ noteMoveMode: e.currentTarget.value as NoteMoveMode })}
+          >
+            {NOTE_MOVE_MODES.map((m) => <option key={m} value={m}>{NOTE_MOVE_LABELS[m]}</option>)}
+          </select>
+        </Row>
+        <Row label="グライド時間">
+          <SliderField
+            value={settings.glideTimeMs}
+            min={0}
+            max={2000}
+            step={10}
+            unit="ms"
+            onCommit={(x) => updateSettings({ glideTimeMs: x })}
           />
         </Row>
 

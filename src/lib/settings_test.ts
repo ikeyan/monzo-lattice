@@ -6,6 +6,7 @@ import {
   DEFAULT_SETTINGS,
   F0_MAX_HZ,
   F0_MIN_HZ,
+  NOTE_MOVE_MODES,
   sanitizeSettings,
   type Settings,
   TIMBRES,
@@ -27,6 +28,8 @@ const assertValidSettings = (s: Settings): void => {
   assert(inRange(s.batchPeriodMs, 50, 250) && s.batchPeriodMs % 10 === 0);
   assert(inRange(s.panThresholdCm, 0.1, 3));
   assert(inRange(s.spreadPenaltyCoeff, 0, 10));
+  assert((NOTE_MOVE_MODES as readonly string[]).includes(s.noteMoveMode));
+  assert(inRange(s.glideTimeMs, 0, 2000));
   assert((TIMBRES as readonly string[]).includes(s.timbre));
   assert(inRange(s.adsr.attackMs, 0, 2000));
   assert(inRange(s.adsr.decayMs, 0, 5000));
@@ -48,6 +51,8 @@ const arbValidSettings: fc.Arbitrary<Settings> = fc
     batchPeriodMs: fc.integer({ min: 5, max: 25 }).map((n) => n * 10),
     panThresholdCm: fc.double({ min: 0.1, max: 3, noNaN: true }),
     spreadPenaltyCoeff: fc.double({ min: 0, max: 10, noNaN: true }),
+    noteMoveMode: fc.constantFrom(...NOTE_MOVE_MODES),
+    glideTimeMs: fc.double({ min: 0, max: 2000, noNaN: true }),
     timbre: fc.constantFrom(...TIMBRES),
     adsr: fc.record({
       attackMs: fc.double({ min: 0, max: 2000, noNaN: true }),
