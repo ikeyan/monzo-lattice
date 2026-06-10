@@ -9,12 +9,12 @@
 
 | 項目 | 採用 |
 | --- | --- |
-| 言語 | TypeScript (型チェックは [typescript-go](https://github.com/microsoft/typescript-go) = `tsgo`) |
+| 言語 | TypeScript (型チェックは `deno check`) |
 | スタイル | 関数型プログラミング |
 | ビュー | React |
 | 状態管理 | jotai |
 | イベント処理 | RxJS (`atomWithObservable` で jotai に接続) |
-| フォーマッタ / リンタ | oxfmt / oxlint |
+| フォーマッタ / リンタ | `deno fmt` / `deno lint` |
 | バンドル | `deno bundle` (HTML エントリポイントから) |
 | テスト | `Deno.test` + fast-check (プロパティテスト) |
 | CI / デプロイ | GitHub Actions / GitHub Pages |
@@ -45,19 +45,21 @@ npx -y playwright screenshot --viewport-size=1280,800 \
 
 ### 型チェックの構成
 
-tsgo は Deno のグローバルや import map を直接は知らないため、2 つの
-tsconfig プロジェクトに分けて両方をチェックする:
+型チェック・フォーマット・リントはすべて Deno 組み込み (`deno check` / `deno fmt` /
+`deno lint`) を使う。`deno check` は import map・`npm:`・`jsr:` をネイティブに解決し、
+React の型も import map の `@types/react` / `@types/react-dom` から自動で解決される。
 
-- `tsconfig.json` — ブラウザで動くコード (`src/`、`*_test.ts` を除く)。lib に DOM を含む。
-- `tsconfig.test.json` — Deno コンテキストのコード (テスト)。DOM の代わりに
-  `deno types` で生成した `deno.d.ts` (gitignore 済み、`deno task check:types` が再生成)
-  を含む。
+Deno 2.5+ は `tsconfig.json` を自動検出して型チェックに使う
+(`include` / `exclude` によるスコープも有効)。これを利用してブラウザコードと
+Deno コンテキストを分けている:
 
-依存は `deno.json` の import map で bare specifier → `npm:` に解決し、
-`nodeModulesDir: "auto"` で `node_modules` を実体化して tsgo からも解決できるようにしている。
-`jsr:` パッケージは `node_modules` に実体化されず tsgo が型解決できないため、
-型チェック対象のソースからは import せず、タスクからの実行専用
-(例: serve タスクの `@std/http/file-server`) に限る。
+- `tsconfig.json` の `include: src` (テスト除外) — lib は DOM のみで
+  `Deno` グローバルなし。ブラウザコードが誤って Deno API に依存すると型エラーになる。
+- 除外されたテスト (`*_test.ts`) — Deno 既定の設定でチェックされ、
+  `Deno.test` がそのまま書ける。
+
+注意: `deno.json` に `compilerOptions` を書くと `tsconfig.json` より優先されて
+このスコープ分けが壊れるため、コンパイラ設定は `tsconfig.json` 側に置くこと。
 
 ### テスト方針
 

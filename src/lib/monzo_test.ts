@@ -32,8 +32,10 @@ const ratioEquals = (actual: number, expected: number): boolean =>
 
 Deno.test("mul は比の乗算に対応する", () => {
   fc.assert(
-    fc.property(arbMonzo, arbMonzo, (a, b) =>
-      ratioEquals(ratioValue(mul(a, b)), ratioValue(a) * ratioValue(b)),
+    fc.property(
+      arbMonzo,
+      arbMonzo,
+      (a, b) => ratioEquals(ratioValue(mul(a, b)), ratioValue(a) * ratioValue(b)),
     ),
   );
 });

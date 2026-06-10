@@ -15,7 +15,7 @@ const activePointerCountAtom = atomWithObservable(() =>
   ).pipe(
     scan((count, delta) => Math.max(0, count + delta), 0),
     startWith(0),
-  ),
+  )
 );
 
 export const App = () => {
