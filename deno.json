@@ -5,18 +5,19 @@
       "description": "全チェック (フォーマット・リント・型・テスト) を一括実行",
       "command": "deno task check:fmt && deno task check:lint && deno task check:types && deno task test"
     },
-    "check:fmt": "oxfmt --check src scripts",
-    "check:lint": "oxlint src scripts",
+    "check:fmt": "oxfmt --check src",
+    "check:lint": "oxlint src",
     "check:types": "deno types > deno.d.ts && tsgo --noEmit -p tsconfig.json && tsgo --noEmit -p tsconfig.test.json",
     "fix": {
       "description": "自動修正 (フォーマット・リント autofix) を一括実行",
-      "command": "oxfmt src scripts && oxlint --fix src scripts"
+      "command": "oxfmt src && oxlint --fix src"
     },
     "test": "deno test src",
     "build": "deno bundle --platform browser --minify --sourcemap=linked --outdir dist index.html",
-    "serve": "deno task build && deno run --allow-net --allow-read=dist scripts/serve.ts"
+    "serve": "deno task build && deno run --allow-net --allow-read=dist @std/http/file-server dist"
   },
   "imports": {
+    "@std/http": "jsr:@std/http@^1.1.1",
     "@types/react": "npm:@types/react@^19.2.17",
     "@types/react-dom": "npm:@types/react-dom@^19.2.3",
     "@typescript/native-preview": "npm:@typescript/native-preview@^7.0.0-dev.20260610.1",

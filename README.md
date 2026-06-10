@@ -38,12 +38,15 @@ tsgo は Deno のグローバルや import map を直接は知らないため、
 tsconfig プロジェクトに分けて両方をチェックする:
 
 - `tsconfig.json` — ブラウザで動くコード (`src/`、`*_test.ts` を除く)。lib に DOM を含む。
-- `tsconfig.test.json` — Deno コンテキストのコード (テストと `scripts/`)。DOM の代わりに
+- `tsconfig.test.json` — Deno コンテキストのコード (テスト)。DOM の代わりに
   `deno types` で生成した `deno.d.ts` (gitignore 済み、`deno task check:types` が再生成)
   を含む。
 
 依存は `deno.json` の import map で bare specifier → `npm:` に解決し、
 `nodeModulesDir: "auto"` で `node_modules` を実体化して tsgo からも解決できるようにしている。
+`jsr:` パッケージは `node_modules` に実体化されず tsgo が型解決できないため、
+型チェック対象のソースからは import せず、タスクからの実行専用
+(例: serve タスクの `@std/http/file-server`) に限る。
 
 ### テスト方針
 
