@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["esnext"]
+  },
+  "include": ["src/**/*_test.ts", "src/**/*_test.tsx", "scripts/**/*", "deno.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}
