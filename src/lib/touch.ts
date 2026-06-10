@@ -17,12 +17,15 @@
  */
 
 import { cellAtPoint, cellRect, type ViewGeometry } from "./lattice_view.ts";
+import type { LatticePrime } from "./monzo.ts";
 
-/** タッチ対象。今はセルのみ (豆 (§4) の実装時に素数の追加を拡張する) */
-export type TouchTarget = Readonly<{ x3: number; yp: number }>;
+/** タッチ対象: セル、または豆 (§4.4: セル (x,y) の豆 q は 3^x · p^y · q) */
+export type TouchTarget = Readonly<{ x3: number; yp: number; bean?: LatticePrime }>;
+
+export const sameCell = (a: TouchTarget, b: TouchTarget): boolean => a.x3 === b.x3 && a.yp === b.yp;
 
 export const sameTarget = (a: TouchTarget, b: TouchTarget): boolean =>
-  a.x3 === b.x3 && a.yp === b.yp;
+  sameCell(a, b) && a.bean === b.bean;
 
 export type ChordNote = Readonly<{
   target: TouchTarget;
@@ -69,7 +72,9 @@ export const INITIAL_GESTURE: GestureState = {
 };
 
 export type GestureEvent =
-  | Readonly<{ type: "down"; pointerId: number; x: number; y: number; at: number }>
+  | Readonly<
+    { type: "down"; pointerId: number; x: number; y: number; at: number; target: TouchTarget }
+  >
   | Readonly<{ type: "move"; pointerId: number; x: number; y: number; at: number }>
   | Readonly<{ type: "up"; pointerId: number; at: number }>
   | Readonly<{ type: "tick"; at: number }>;
@@ -136,7 +141,7 @@ export const cellWithMargin = (
   marginFrac: number,
 ): TouchTarget => {
   const hit = cellAtPoint(geo, px, py);
-  if (sameTarget(hit, current)) return current;
+  if (sameCell(hit, current)) return current;
   const s = geo.cellSizePx;
   const { left, top } = cellRect(geo, hit.x3, hit.yp);
   const depth = Math.min(px - left, left + s - px, py - top, top + s - py);
@@ -152,11 +157,7 @@ const onDown = (
   const firstTouchTimes = state.firstTouchTimes.has(event.pointerId)
     ? state.firstTouchTimes
     : mapSet(state.firstTouchTimes, event.pointerId, event.at);
-  const active = mapSet(
-    state.active,
-    event.pointerId,
-    cellAtPoint(config.geo, event.x, event.y),
-  );
+  const active = mapSet(state.active, event.pointerId, event.target);
   if (state.mode === "idle") {
     return still({
       ...state,
@@ -164,7 +165,8 @@ const onDown = (
       windowEndsAt: event.at + config.batchMs,
       firstTouchTimes,
       active,
-      panEligible: true,
+      // 豆の上から始まったタッチはパンにしない (豆はドラッグ&ドロップ (§4.2) になる)
+      panEligible: event.target.bean === undefined,
       firstDown: { pointerId: event.pointerId, x: event.x, y: event.y },
     });
   }

@@ -1,3 +1,4 @@
+import { BeanDragLayer } from "./components/bean_drag.tsx";
 import { Header } from "./components/header.tsx";
 import { Lattice } from "./components/lattice.tsx";
 import { PitchLine } from "./components/pitch_line.tsx";
@@ -11,6 +12,7 @@ export const App = () => (
     <PitchLine />
     <Lattice />
     <SettingsDialog />
+    <BeanDragLayer />
     <Synth />
   </div>
 );

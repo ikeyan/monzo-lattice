@@ -156,6 +156,35 @@
         background: rgba(230, 80, 80, 0.5);
       }
 
+      /* 豆 (仕様 §4) */
+      .bean {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        display: grid;
+        place-items: center;
+        background: #7a5230;
+        color: #fff;
+        border-radius: 50%;
+        font-size: 0.65rem;
+        font-weight: bold;
+        pointer-events: none;
+        box-shadow: inset -2px -2px 3px rgba(0, 0, 0, 0.3);
+      }
+      .palette-bean {
+        position: static;
+        transform: none;
+        width: 1cm;
+        height: 0.6cm;
+        pointer-events: auto;
+        cursor: grab;
+        touch-action: none;
+      }
+      .bean-ghost {
+        position: fixed;
+        z-index: 10;
+        opacity: 0.85;
+      }
+
       /* 設定画面 (仕様 §5.4) */
       .settings-overlay {
         position: fixed;

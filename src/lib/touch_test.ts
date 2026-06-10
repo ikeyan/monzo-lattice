@@ -29,6 +29,7 @@ const down = (id: number, x3: number, yp: number, at: number): GestureEvent => (
   pointerId: id,
   ...center(x3, yp),
   at,
+  target: { x3, yp },
 });
 const downAt = (id: number, x: number, y: number, at: number): GestureEvent => ({
   type: "down",
@@ -36,6 +37,14 @@ const downAt = (id: number, x: number, y: number, at: number): GestureEvent => (
   x,
   y,
   at,
+  target: cellAtPoint(GEO, x, y),
+});
+const downBean = (id: number, x3: number, yp: number, bean: 5 | 7, at: number): GestureEvent => ({
+  type: "down",
+  pointerId: id,
+  ...center(x3, yp),
+  at,
+  target: { x3, yp, bean },
 });
 const moveAt = (id: number, x: number, y: number, at: number): GestureEvent => ({
   type: "move",
@@ -235,7 +244,7 @@ const arbCommands: fc.Arbitrary<readonly Command[]> = fc.array(
 
 const toEvent = (c: Command, at: number): GestureEvent =>
   c.kind === "down"
-    ? { type: "down", pointerId: c.id, x: c.x, y: c.y, at }
+    ? { type: "down", pointerId: c.id, x: c.x, y: c.y, at, target: cellAtPoint(GEO, c.x, c.y) }
     : c.kind === "move"
     ? { type: "move", pointerId: c.id, x: c.x, y: c.y, at }
     : c.kind === "up"
@@ -321,4 +330,34 @@ Deno.test("chordOf: 底音はタッチ中で最初のタッチ時刻が最古の
       }
     }),
   );
+});
+
+// --- 豆のタッチ (§4.4) ---
+
+Deno.test("豆のタッチは豆つきの対象として和音に入る (§4.4)", () => {
+  const { state } = run([down(1, 0, 0, 0), downBean(2, 1, 0, 7, 50), tick(100)]);
+  assertEquals(state.committed?.notes.length, 2);
+  assert(
+    state.committed?.notes.some((n) => n.target.bean === 7 && n.target.x3 === 1),
+    "豆 7 の構成音がある",
+  );
+});
+
+Deno.test("豆の上から始まったタッチは大きく動いてもパンにならない", () => {
+  const result = run([
+    downBean(1, 0, 0, 5, 0),
+    moveAt(1, 600, 300, 50),
+    tick(100),
+  ]);
+  assert(result.state.mode !== "panning");
+  assertEquals(result.pans, []);
+});
+
+Deno.test("豆つきの指がセル内で動いても豆は外れない (§6.4)", () => {
+  const { state } = run([
+    downBean(1, 0, 0, 5, 0),
+    tick(100),
+    moveAt(1, 420, 320, 200), // セル (0,0) 内の移動
+  ]);
+  assertEquals(state.committed?.notes[0]?.target, { x3: 0, yp: 0, bean: 5 });
 });

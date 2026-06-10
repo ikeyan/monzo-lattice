@@ -11,7 +11,7 @@
  * (log2 周波数の分散 × 係数)。候補空間は小さいので全探索で厳密に最小化する。
  */
 
-import { cellMonzo, formatMonzo, type LatticePrime, ratioValue } from "./monzo.ts";
+import { cellMonzo, formatMonzo, type LatticePrime, mul, normalize, ratioValue } from "./monzo.ts";
 import type { Settings } from "./settings.ts";
 import { chordDissonance, TIMBRE_SPECTRA } from "./spectrum.ts";
 import { type Chord, sameTarget } from "./touch.ts";
@@ -62,10 +62,11 @@ export const bassRangeOctave = (r: number, bassMin: number): number => {
   return r * 2 ** n >= bassMin ? n : n + 1;
 };
 
-/** タッチの和音 (§6.3) をボイシング入力に変換する */
+/** タッチの和音 (§6.3) をボイシング入力に変換する。豆 (§4.4) は monzo に素数を掛ける */
 export const chordToVoicingInput = (chord: Chord, p: LatticePrime): VoicingInput => {
   const notes = chord.notes.map((n) => {
-    const monzo = cellMonzo(n.target.x3, n.target.yp, p);
+    const cell = cellMonzo(n.target.x3, n.target.yp, p);
+    const monzo = n.target.bean === undefined ? cell : mul(cell, normalize({ [n.target.bean]: 1 }));
     return { ratio: ratioValue(monzo), monzoKey: formatMonzo(monzo), fingerIds: n.fingerIds };
   });
   const bassIndex = chord.notes.findIndex((n) => sameTarget(n.target, chord.bass));

@@ -3,6 +3,7 @@
 import { useAtom, useSetAtom } from "jotai";
 import { LATTICE_PRIMES, type LatticePrime } from "../lib/monzo.ts";
 import { type Timbre, TIMBRES } from "../lib/settings.ts";
+import { beanDragAtom } from "../state/beans.ts";
 import { settingsAtom } from "../state/settings.ts";
 import { settingsOpenAtom } from "../state/ui.ts";
 
@@ -24,6 +25,7 @@ export const TIMBRE_NAMES: Readonly<Record<Timbre, string>> = {
 export const Header = () => {
   const [settings, updateSettings] = useAtom(settingsAtom);
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
+  const setBeanDrag = useSetAtom(beanDragAtom);
   return (
     <header className="header">
       <label className="header-item">
@@ -53,9 +55,27 @@ export const Header = () => {
           ))}
         </select>
       </label>
-      {/* 豆パレット (§4.1): ドラッグ&ドロップはステップ 7 で実装 */}
-      <div className="header-item bean-palette" title="豆パレット (実装予定)">
+      {/* 豆パレット (§4.1, §4.2): ここから格子へドラッグしてコピー */}
+      <div className="header-item bean-palette" title="豆パレット">
         ✊
+        {LATTICE_PRIMES.filter((q) => q !== settings.latticePrime).map((q) => (
+          <span
+            key={q}
+            className="bean palette-bean"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              setBeanDrag({
+                pointerId: e.pointerId,
+                prime: q,
+                from: null,
+                x: e.clientX,
+                y: e.clientY,
+              });
+            }}
+          >
+            {q}
+          </span>
+        ))}
       </div>
       <button
         type="button"
