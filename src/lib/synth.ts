@@ -22,6 +22,8 @@ type Voice = Readonly<{
   gain: GainNode;
   oscillators: readonly Readonly<{ osc: OscillatorNode; partialRatio: number }>[];
   finalRatio: number;
+  /** 現在向かっているサスティン音量 (和音サイズの正規化 × sustainLevel) */
+  sustainTarget: number;
 }>;
 
 /** 指数減衰する 2ch ノイズのインパルス応答 (-60 dB @ seconds) */
@@ -68,18 +70,23 @@ const startVoice = (
     osc.start(now);
     return { osc, partialRatio: p.ratio };
   });
-  return { gain, oscillators, finalRatio };
+  return { gain, oscillators, finalRatio, sustainTarget: amplitude * sustainLevel };
 };
 
-const releaseVoice = (voice: Voice, settings: Settings, now: number): void => {
-  const releaseSec = Math.max(0.005, settings.adsr.releaseMs / 1000);
-  const param = voice.gain.gain;
+/** スケジュール済みのランプを現在値で打ち切る */
+const holdParam = (param: AudioParam, now: number): void => {
   // cancelAndHoldAtTime は未対応ブラウザがある (Firefox 等は実装が新しい)
   if (typeof param.cancelAndHoldAtTime === "function") {
     param.cancelAndHoldAtTime(now);
   } else {
     param.cancelScheduledValues(now);
   }
+};
+
+const releaseVoice = (voice: Voice, settings: Settings, now: number): void => {
+  const releaseSec = Math.max(0.005, settings.adsr.releaseMs / 1000);
+  const param = voice.gain.gain;
+  holdParam(param, now);
   param.setTargetAtTime(0, now, releaseSec / 5);
   for (const { osc } of voice.oscillators) osc.stop(now + releaseSec + 0.1);
   const first = voice.oscillators[0];
@@ -137,6 +144,13 @@ export const createSynth = (ctx: AudioContext): Synth => {
           if (Math.abs(osc.frequency.value - freq) > 1e-6) {
             osc.frequency.setTargetAtTime(freq, now, 0.02);
           }
+        }
+        // 和音サイズ (正規化) や sustainLevel の変化にも音量を追従させる
+        const desired = amplitude * settings.adsr.sustainLevel;
+        if (Math.abs(desired - existing.sustainTarget) > 1e-6) {
+          holdParam(existing.gain.gain, now);
+          existing.gain.gain.setTargetAtTime(desired, now, 0.05);
+          voices.set(key, { ...existing, sustainTarget: desired });
         }
       }
     }
