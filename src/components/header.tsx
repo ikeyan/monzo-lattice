@@ -1,6 +1,7 @@
 /** ヘッダ (仕様 §5.2): p 入力・音色・豆パレット・設定ボタンを同じ高さで並べる */
 
 import { useAtom, useSetAtom } from "jotai";
+import { ensureAudioReady } from "../lib/audio.ts";
 import { LATTICE_PRIMES, type LatticePrime } from "../lib/monzo.ts";
 import { type Timbre, TIMBRES } from "../lib/settings.ts";
 import { beanDragAtom } from "../state/beans.ts";
@@ -64,6 +65,9 @@ export const Header = () => {
             className="bean palette-bean"
             onPointerDown={(e) => {
               e.preventDefault();
+              // 最初の操作がパレットのドラッグでも §4.2 のドラッグ中発音が
+              // 鳴るよう、ユーザージェスチャのうちに音声を初期化する (§6.1)
+              ensureAudioReady();
               setBeanDrag({
                 pointerId: e.pointerId,
                 prime: q,
