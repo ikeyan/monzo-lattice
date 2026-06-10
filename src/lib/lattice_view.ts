@@ -50,6 +50,16 @@ const cellCenter = (geo: ViewGeometry, x3: number, yp: number): { cx: number; cy
     : { cx: o.cx + yp * s, cy: o.cy - x3 * s };
 };
 
+/** セル (x3, yp) の矩形の左上の画面座標 */
+export const cellRect = (
+  geo: ViewGeometry,
+  x3: number,
+  yp: number,
+): { left: number; top: number } => {
+  const { cx, cy } = cellCenter(geo, x3, yp);
+  return { left: cx - geo.cellSizePx / 2, top: cy - geo.cellSizePx / 2 };
+};
+
 /** 画面座標が属するセル */
 export const cellAtPoint = (
   geo: ViewGeometry,
