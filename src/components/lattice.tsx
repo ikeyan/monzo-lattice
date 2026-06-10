@@ -9,7 +9,7 @@
 
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
-import { fromEvent, map, merge, scan, Subject } from "rxjs";
+import { filter, fromEvent, map, merge, scan, Subject } from "rxjs";
 import { ensureAudioReady } from "../lib/audio.ts";
 import { beanPositionsCm, beansAt, effectiveBeans, targetAtPoint } from "../lib/beans.ts";
 import {
@@ -74,6 +74,8 @@ export const Lattice = () => {
   settingsRef.current = settings;
   const boardRef = useRef(board);
   boardRef.current = board;
+  const beanDragRef = useRef(beanDrag);
+  beanDragRef.current = beanDrag;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -137,6 +139,9 @@ export const Lattice = () => {
       }),
     );
     const move$ = fromEvent<PointerEvent>(el, "pointermove").pipe(
+      // 豆の D&D に昇格した指の生 move は無視する。さもないと cellWithMargin が
+      // 豆なしのセルを発音させてしまう。発音は BeanDragLayer の合成 down/up が担う (§4.2)
+      filter((e) => beanDragRef.current?.pointerId !== e.pointerId),
       map((e): GestureEvent => ({
         type: "move",
         pointerId: e.pointerId,
