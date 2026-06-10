@@ -32,6 +32,17 @@ deno task build     # dist/ にバンドル
 deno task serve     # ビルドして http://localhost:8000 で配信
 ```
 
+### 見た目の確認 (スクリーンショット)
+
+Playwright の Chromium でレンダリング結果を画像にできる
+(開発サンドボックスにはブラウザがプリインストール済み):
+
+```sh
+deno task serve &
+npx -y playwright screenshot --viewport-size=1280,800 \
+  --wait-for-timeout=2500 http://localhost:8000/ screenshot.png
+```
+
 ### 型チェックの構成
 
 tsgo は Deno のグローバルや import map を直接は知らないため、2 つの
