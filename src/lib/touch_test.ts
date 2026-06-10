@@ -64,7 +64,10 @@ Deno.test("単一タッチはバッチ期間の経過後に和音として確定
   assertEquals(before.state.committed, null);
   const after = run([down(1, 0, 0, 0), tick(100)]);
   assertEquals(after.state.mode, "sounding");
-  assertEquals(after.state.committed, { notes: [{ x3: 0, yp: 0 }], bass: { x3: 0, yp: 0 } });
+  assertEquals(after.state.committed, {
+    notes: [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }],
+    bass: { x3: 0, yp: 0 },
+  });
 });
 
 Deno.test("バッチ期間内の複数タッチは 1 つの和音にまとまり、最初の指が底音 (§6.2, §6.3)", () => {
@@ -149,7 +152,7 @@ Deno.test("発音中のセル移動は即時に和音を変える (§6.4)", () =
     tick(100),
     moveAt(1, 510, 300, 200), // セル (1,0) の枠から 10px (3% = 3px 以上) 内側
   ]);
-  assertEquals(moved.state.committed?.notes, [{ x3: 1, yp: 0 }]);
+  assertEquals(moved.state.committed?.notes, [{ target: { x3: 1, yp: 0 }, fingerIds: [1] }]);
   assertEquals(moved.state.mode, "sounding");
 });
 
@@ -159,13 +162,13 @@ Deno.test("マージンより浅い移動ではセルが変わらない (§6.4)"
     tick(100),
     moveAt(1, 452, 300, 200), // セル (1,0) に入ったが枠から 2px (< 3px)
   ]);
-  assertEquals(shallow.state.committed?.notes, [{ x3: 0, yp: 0 }]);
+  assertEquals(shallow.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
 });
 
 Deno.test("発音中の down/up で開く窓の間は前の和音が鳴り続ける (§6.2)", () => {
   const { state } = run([down(1, 0, 0, 0), tick(100), down(2, 1, 0, 200), tick(250)]);
   // 2 本目の down 直後〜窓の終わりまでは前の和音のまま
-  assertEquals(state.committed?.notes, [{ x3: 0, yp: 0 }]);
+  assertEquals(state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
   const after = run([down(1, 0, 0, 0), tick(100), down(2, 1, 0, 200), tick(300)]);
   assertEquals(after.state.committed?.notes.length, 2);
 });
@@ -256,9 +259,9 @@ const assertInvariants = (s: GestureState): void => {
   }
   if (s.committed !== null) {
     const { notes, bass } = s.committed;
-    assert(notes.some((n) => sameTarget(n, bass)), "底音は和音の構成音");
+    assert(notes.some((n) => sameTarget(n.target, bass)), "底音は和音の構成音");
     assert(
-      notes.every((n, i) => notes.findIndex((m) => sameTarget(m, n)) === i),
+      notes.every((n, i) => notes.findIndex((m) => sameTarget(m.target, n.target)) === i),
       "構成音は重複しない",
     );
   }
@@ -310,6 +313,12 @@ Deno.test("chordOf: 底音はタッチ中で最初のタッチ時刻が最古の
         }),
         "底音は最古の指のセル",
       );
+      // 各指はちょうど 1 つの構成音に属し、その構成音は指のセルと一致する
+      for (const [id, target] of active) {
+        const owners = chord.notes.filter((n) => n.fingerIds.includes(id));
+        assertEquals(owners.length, 1);
+        assert(owners[0] !== undefined && sameTarget(owners[0].target, target));
+      }
     }),
   );
 });

@@ -10,6 +10,7 @@ import { useAtomValue } from "jotai";
 import { F0_MAX_HZ, F0_MIN_HZ } from "../lib/settings.ts";
 import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
+import { voicingAtom } from "../state/voicing.ts";
 
 /** 周波数 → 表示範囲内の位置 (0 = 最低音, 1 = 最高音) */
 const logFraction = (hz: number): number =>
@@ -41,6 +42,7 @@ const BandRect = ({ band, isLandscape }: { band: Band; isLandscape: boolean }) =
 export const PitchLine = () => {
   const settings = useAtomValue(settingsAtom);
   const isLandscape = useAtomValue(isLandscapeAtom);
+  const voicing = useAtomValue(voicingAtom);
   const { f0Hz } = settings;
 
   const bands: readonly Band[] = [
@@ -108,6 +110,16 @@ export const PitchLine = () => {
             </g>
           );
       })()}
+      {/* ボイシング結果 (§7.5): 現在鳴っている各音の音高 */}
+      {voicing?.notes.map((v, i) => {
+        const hz = f0Hz * v.finalRatio;
+        if (hz < F0_MIN_HZ || hz > F0_MAX_HZ) return null;
+        const pos = toPercent(logFraction(hz), isLandscape);
+        const className = v.isBassRange ? "voiced-note voiced-bass" : "voiced-note";
+        return isLandscape
+          ? <circle key={i} className={className} cx="50%" cy={pos} r="5" />
+          : <circle key={i} className={className} cx={pos} cy="50%" r="5" />;
+      })}
     </svg>
   );
 };

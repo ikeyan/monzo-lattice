@@ -19,6 +19,7 @@ import {
 import { cellMonzo, formatMonzo } from "../lib/monzo.ts";
 import {
   CELL_MOVE_MARGIN,
+  type Chord,
   type GestureConfig,
   type GestureEvent,
   type GestureResult,
@@ -26,10 +27,12 @@ import {
   reduceGesture,
   sameTarget,
 } from "../lib/touch.ts";
+import { chordToVoicingInput, solveVoicingTransition } from "../lib/voicing.ts";
 import { chordAtom } from "../state/chord.ts";
 import { panAtom } from "../state/lattice.ts";
 import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
+import { voicingAtom } from "../state/voicing.ts";
 
 export const Lattice = () => {
   const settings = useAtomValue(settingsAtom);
@@ -37,6 +40,7 @@ export const Lattice = () => {
   const pan = useAtomValue(panAtom);
   const setPan = useSetAtom(panAtom);
   const setChord = useSetAtom(chordAtom);
+  const setVoicing = useSetAtom(voicingAtom);
   const chord = useAtomValue(chordAtom);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -57,6 +61,8 @@ export const Lattice = () => {
     marginFrac: CELL_MOVE_MARGIN,
     geo,
   };
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -107,6 +113,7 @@ export const Lattice = () => {
     );
 
     let timer: number | undefined;
+    let lastCommitted: Chord | null = null;
     const subscription = merge(down$, move$, up$, tick$)
       .pipe(
         scan<GestureEvent, GestureResult>(
@@ -120,7 +127,20 @@ export const Lattice = () => {
             applyPanDelta(prev, panDelta.dx, panDelta.dy, configRef.current.geo.isWide)
           );
         }
-        setChord(state.committed);
+        if (state.committed !== lastCommitted) {
+          lastCommitted = state.committed;
+          setChord(state.committed);
+          // 和音が変わったらボイシングを解き直す (§7)。遷移は前回の結果を参照 (§7.4)
+          const s = settingsRef.current;
+          setVoicing((prev) =>
+            state.committed === null ? null : solveVoicingTransition(
+              chordToVoicingInput(state.committed, s.latticePrime),
+              s,
+              s.chordTransitionMode,
+              prev,
+            )
+          );
+        }
         clearTimeout(timer);
         if (state.windowEndsAt !== null) {
           const delay = Math.max(0, state.windowEndsAt - performance.now());
@@ -138,7 +158,7 @@ export const Lattice = () => {
   return (
     <div ref={containerRef} className="lattice">
       {cells.map((c) => {
-        const isActive = chord?.notes.some((n) => sameTarget(n, c)) ?? false;
+        const isActive = chord?.notes.some((n) => sameTarget(n.target, c)) ?? false;
         const isBass = chord !== null && sameTarget(chord.bass, c);
         const classes = [
           "lattice-cell",

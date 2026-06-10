@@ -24,10 +24,16 @@ export type TouchTarget = Readonly<{ x3: number; yp: number }>;
 export const sameTarget = (a: TouchTarget, b: TouchTarget): boolean =>
   a.x3 === b.x3 && a.yp === b.yp;
 
+export type ChordNote = Readonly<{
+  target: TouchTarget;
+  /** この音を押さえている指 (ボイシングの遷移モード §7.4 が使う) */
+  fingerIds: readonly number[];
+}>;
+
 export type Chord = Readonly<{
-  /** 発音する対象 (同一セルの重複は除く) */
-  notes: readonly TouchTarget[];
-  /** 底音 (notes のいずれか) */
+  /** 発音する対象 (同一セルの重複はまとめる) */
+  notes: readonly ChordNote[];
+  /** 底音 (notes のいずれかの target) */
   bass: TouchTarget;
 }>;
 
@@ -109,8 +115,11 @@ export const chordOf = (
   });
   const bass = active.get(bassId);
   if (bass === undefined) return null;
-  const values = [...active.values()];
-  const notes = values.filter((t, i) => values.findIndex((u) => sameTarget(u, t)) === i);
+  const notes = [...active.entries()].reduce<readonly ChordNote[]>((acc, [id, target]) => {
+    const existing = acc.findIndex((n) => sameTarget(n.target, target));
+    if (existing === -1) return [...acc, { target, fingerIds: [id] }];
+    return acc.map((n, i) => i === existing ? { ...n, fingerIds: [...n.fingerIds, id] } : n);
+  }, []);
   return { notes, bass };
 };
 
