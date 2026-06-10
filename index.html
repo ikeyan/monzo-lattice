@@ -125,11 +125,21 @@
         grid-area: lattice;
         position: relative;
         overflow: hidden;
+        cursor: grab;
+      }
+      .lattice-cell {
+        position: absolute;
         display: grid;
         place-items: center;
+        border: 1px solid #ddd;
+        font-size: 0.9rem;
+        color: #444;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
       }
-      .lattice-placeholder {
-        color: #999;
+      .lattice-cell.origin {
+        background: rgba(255, 200, 64, 0.25);
+        font-weight: bold;
       }
 
       /* 設定画面 (仕様 §5.4) */

@@ -3,6 +3,7 @@ import fc from "fast-check";
 import {
   cellMonzo,
   equals,
+  formatMonzo,
   inverse,
   LATTICE_PRIMES,
   type Monzo,
@@ -72,6 +73,21 @@ Deno.test("equals は正規形での構造的等価と一致する", () => {
       assertEquals(equals(a, b), JSON.stringify(a) === JSON.stringify(b));
     }),
   );
+});
+
+Deno.test("formatMonzo は単射 (異なる monzo は異なる表示になる)", () => {
+  fc.assert(
+    fc.property(arbMonzo, arbMonzo, (a, b) => {
+      assertEquals(formatMonzo(a) === formatMonzo(b), equals(a, b));
+    }),
+  );
+});
+
+Deno.test("formatMonzo の表示例", () => {
+  assertEquals(formatMonzo(UNIT), "1");
+  assertEquals(formatMonzo(normalize({ 3: 1 })), "3");
+  assertEquals(formatMonzo(normalize({ 3: -1, 5: 2 })), "3⁻¹·5²");
+  assertEquals(formatMonzo(normalize({ 5: -12 })), "5⁻¹²");
 });
 
 Deno.test("cellMonzo(x, y, p) は 3^x * p^y を表す", () => {
