@@ -169,16 +169,6 @@ export const Lattice = () => {
         if (state.committed !== lastCommitted) {
           lastCommitted = state.committed;
           setChord(state.committed);
-          // 和音が変わったらボイシングを解き直す (§7)。遷移は前回の結果を参照 (§7.4)
-          const s = settingsRef.current;
-          setVoicing((prev) =>
-            state.committed === null ? null : solveVoicingTransition(
-              chordToVoicingInput(state.committed, s.latticePrime),
-              s,
-              s.chordTransitionMode,
-              prev,
-            )
-          );
         }
         clearTimeout(timer);
         if (state.windowEndsAt !== null) {
@@ -191,6 +181,19 @@ export const Lattice = () => {
       clearTimeout(timer);
     };
   }, [setPan, setChord, setVoicing, setBeanCandidate]);
+
+  // ボイシング (§7) は和音と設定から導く。和音の変化だけでなく、発音中の
+  // 設定変更 (p・音域・音色・f0 等) にも追従する。遷移は前回の結果を参照 (§7.4)
+  useEffect(() => {
+    setVoicing((prev) =>
+      chord === null ? null : solveVoicingTransition(
+        chordToVoicingInput(chord, settings.latticePrime),
+        settings,
+        settings.chordTransitionMode,
+        prev,
+      )
+    );
+  }, [chord, settings, setVoicing]);
 
   const cells = size.width > 0 && size.height > 0 ? visibleCells(geo) : [];
   const pxPerCm = cellSizePx / settings.cellSizeCm;

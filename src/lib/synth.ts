@@ -20,7 +20,8 @@ export type Synth = Readonly<{
 
 type Voice = Readonly<{
   gain: GainNode;
-  oscillators: readonly OscillatorNode[];
+  oscillators: readonly Readonly<{ osc: OscillatorNode; partialRatio: number }>[];
+  finalRatio: number;
 }>;
 
 /** 指数減衰する 2ch ノイズのインパルス応答 (-60 dB @ seconds) */
@@ -39,11 +40,12 @@ const buildImpulse = (ctx: AudioContext, seconds: number): AudioBuffer => {
 const startVoice = (
   ctx: AudioContext,
   out: AudioNode,
-  freqHz: number,
+  finalRatio: number,
   amplitude: number,
   settings: Settings,
   now: number,
 ): Voice => {
+  const freqHz = settings.f0Hz * finalRatio;
   const { attackMs, decayMs, sustainLevel } = settings.adsr;
   const gain = ctx.createGain();
   gain.gain.setValueAtTime(0, now);
@@ -64,9 +66,9 @@ const startVoice = (
     osc.connect(partialGain);
     partialGain.connect(gain);
     osc.start(now);
-    return osc;
+    return { osc, partialRatio: p.ratio };
   });
-  return { gain, oscillators };
+  return { gain, oscillators, finalRatio };
 };
 
 const releaseVoice = (voice: Voice, settings: Settings, now: number): void => {
@@ -79,10 +81,10 @@ const releaseVoice = (voice: Voice, settings: Settings, now: number): void => {
     param.cancelScheduledValues(now);
   }
   param.setTargetAtTime(0, now, releaseSec / 5);
-  for (const osc of voice.oscillators) osc.stop(now + releaseSec + 0.1);
+  for (const { osc } of voice.oscillators) osc.stop(now + releaseSec + 0.1);
   const first = voice.oscillators[0];
   if (first !== undefined) {
-    first.onended = () => voice.gain.disconnect();
+    first.osc.onended = () => voice.gain.disconnect();
   }
 };
 
@@ -125,11 +127,17 @@ export const createSynth = (ctx: AudioContext): Synth => {
     const amplitude = 0.9 / Math.sqrt(Math.max(1, targets.length));
     for (const v of targets) {
       const key = keyOf(v.finalRatio);
-      if (!voices.has(key)) {
-        voices.set(
-          key,
-          startVoice(ctx, master, settings.f0Hz * v.finalRatio, amplitude, settings, now),
-        );
+      const existing = voices.get(key);
+      if (existing === undefined) {
+        voices.set(key, startVoice(ctx, master, v.finalRatio, amplitude, settings, now));
+      } else {
+        // 維持される声部は f0 の変更に追従して再調律する (§2.1: f0 を動かすと音も動く)
+        for (const { osc, partialRatio } of existing.oscillators) {
+          const freq = settings.f0Hz * existing.finalRatio * partialRatio;
+          if (Math.abs(osc.frequency.value - freq) > 1e-6) {
+            osc.frequency.setTargetAtTime(freq, now, 0.02);
+          }
+        }
       }
     }
   };
