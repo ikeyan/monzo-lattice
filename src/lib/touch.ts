@@ -5,13 +5,16 @@
  * イベントの引数で受け取り、バッチ期限のタイマーは呼び出し側 (RxJS アダプタ) が
  * windowEndsAt に合わせて tick イベントを注入する。
  *
- * - バッチ化 (§6.2): 最初の down/up から batchMs の間、和音の変更を保留する。
- *   窓の中のイベントは窓を延長しない。窓の終わりに正味の状態を確定 (発音) する。
+ * - バッチ化 (§6.2): 和音 (ボイシング前 = 構成 monzo の集合と底音) を変える最初の
+ *   イベントから batchMs の間、変更を保留する。down/up もセル移動も等しく対象。
+ *   窓の中のイベントは窓を延長しないが、変更が打ち消されたら何も確定せず窓を
+ *   閉じる (窓が開いている ⇔ 確定待ちの変更がある)。窓の終わりに正味の状態を
+ *   確定 (発音) する。和音を変えないイベントはバッチせず、指の割り当てだけを
+ *   即時更新する。
  * - 底音 (§6.3, §6.5): 指ごとに最初のタッチ時刻を記憶し、タッチ中で最古の指が底音。
  *   記憶は和音が完全に終わる (idle に戻る) まで保持するので、再タッチした指は
  *   元の時刻で底音を取り戻す。
  * - セル移動 (§6.4): 移動先セルの枠から 3% より中に入って初めて移動と判定。
- *   発音中の移動は即時に和音を変える (バッチしない)。
  * - パン (§6.6): タッチなしの状態から開いた窓の間に、単独の指が閾値を超えて
  *   動いたら和音を作らずパンに切り替える。
  */
@@ -40,6 +43,16 @@ export type Chord = Readonly<{
   bass: TouchTarget;
 }>;
 
+/**
+ * 和音の同一性 (§6.2): 構成 monzo の集合と底音の組。
+ * どの指がどの monzo を押さえているか (fingerIds) は含まない。
+ */
+export const sameChord = (a: Chord | null, b: Chord | null): boolean =>
+  a === null || b === null
+    ? a === b
+    : sameTarget(a.bass, b.bass) && a.notes.length === b.notes.length &&
+      a.notes.every((n) => b.notes.some((m) => sameTarget(m.target, n.target)));
+
 export type GestureMode = "idle" | "pending" | "sounding" | "panning";
 
 export type GestureState = Readonly<{
@@ -50,7 +63,7 @@ export type GestureState = Readonly<{
   firstTouchTimes: ReadonlyMap<number, number>;
   /** タッチ中の指 → 対象セル */
   active: ReadonlyMap<number, TouchTarget>;
-  /** 発音中の和音 (バッチ確定済み)。§6.4 の移動だけは即時反映される */
+  /** 発音中の和音 (バッチ確定済み) */
   committed: Chord | null;
   /** この窓が §6.6 のパン開始になりうるか (idle から単指で開いた窓のみ) */
   panEligible: boolean;
@@ -148,6 +161,47 @@ export const cellWithMargin = (
   return depth >= marginFrac * s ? hit : current;
 };
 
+/**
+ * active / firstTouchTimes の変更を状態に反映する (§6.2)。
+ *
+ * 新しい active から和音 (monzo 集合と底音) を導いて発音中の和音と比べる:
+ * - 変わらない: バッチ不要。指の割り当てだけ即時更新し、開いていた窓は
+ *   変更が打ち消されたことになるので何も確定せずに閉じる。
+ * - 変わる: sounding なら新しい窓を開く (窓の間は前の和音が鳴り続ける)。
+ *   pending なら窓は延長しない。
+ * これで「窓が開いている ⇔ 確定待ちの和音変更がある」が保たれ、次の変更は
+ * 常に最初から 1 バッチ期間かけて確定する。
+ */
+const reconcileChord = (
+  state: GestureState,
+  at: number,
+  config: GestureConfig,
+  changes: Readonly<Partial<Pick<GestureState, "active" | "firstTouchTimes" | "panEligible">>>,
+): GestureState => {
+  const next = { ...state, ...changes };
+  const chord = chordOf(next.active, next.firstTouchTimes);
+  if (sameChord(chord, state.committed)) {
+    // 無音 (committed === null) に戻ったら和音の完全な終了 (idle) になる
+    if (chord === null) return INITIAL_GESTURE;
+    return {
+      ...next,
+      mode: "sounding",
+      windowEndsAt: null,
+      committed: chord,
+      panEligible: false,
+      firstDown: null,
+    };
+  }
+  if (state.mode === "pending") return next;
+  return {
+    ...next,
+    mode: "pending",
+    windowEndsAt: at + config.batchMs,
+    panEligible: false,
+    firstDown: null,
+  };
+};
+
 const onDown = (
   state: GestureState,
   event: Extract<GestureEvent, { type: "down" }>,
@@ -170,20 +224,12 @@ const onDown = (
       firstDown: { pointerId: event.pointerId, x: event.x, y: event.y },
     });
   }
-  if (state.mode === "pending") {
-    // 窓は延長しない (§6.2 は「最初の」イベントから)
-    return still({ ...state, firstTouchTimes, active, panEligible: false });
-  }
-  // sounding: 新しい窓を開く
-  return still({
-    ...state,
-    mode: "pending",
-    windowEndsAt: event.at + config.batchMs,
+  // 2 本目以降の指はパンの可能性を消す (§6.6)
+  return still(reconcileChord(state, event.at, config, {
     firstTouchTimes,
     active,
     panEligible: false,
-    firstDown: null,
-  });
+  }));
 };
 
 const onUp = (
@@ -196,18 +242,7 @@ const onUp = (
   }
   if (!state.active.has(event.pointerId)) return still(state);
   const active = mapDelete(state.active, event.pointerId);
-  if (state.mode === "pending") {
-    return still({ ...state, active, panEligible: false });
-  }
-  // sounding: 新しい窓を開く (窓の間は前の和音が鳴り続ける)
-  return still({
-    ...state,
-    mode: "pending",
-    windowEndsAt: event.at + config.batchMs,
-    active,
-    panEligible: false,
-    firstDown: null,
-  });
+  return still(reconcileChord(state, event.at, config, { active, panEligible: false }));
 };
 
 const onMove = (
@@ -249,11 +284,7 @@ const onMove = (
   const next = cellWithMargin(config.geo, current, event.x, event.y, config.marginFrac);
   if (sameTarget(next, current)) return still(state);
   const active = mapSet(state.active, event.pointerId, next);
-  if (state.mode === "sounding") {
-    // §6.4: 発音中の移動は即時反映
-    return still({ ...state, active, committed: chordOf(active, state.firstTouchTimes) });
-  }
-  return still({ ...state, active });
+  return still(reconcileChord(state, event.at, config, { active }));
 };
 
 const onTick = (

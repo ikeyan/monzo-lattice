@@ -3,18 +3,27 @@
  *
  * 88 鍵の範囲 (§2.1) を log スケールで表示し、f0・ベース音域・中音域を示す。
  * 横長画面では左に縦線、縦長画面では下に横線 (§5.1)。
- * f0 や音域のドラッグ操作、ボイシング結果の表示は後のステップで実装する。
+ * f0 と音域はドラッグで指定できる (§2.1, §2.2)。当たり判定とドラッグの数式は
+ * lib/pitch_line.ts の純粋関数に置き、ここでは pointer イベントの配線だけを行う。
  */
 
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
+import { useRef } from "react";
+import {
+  applyPitchDrag,
+  fractionToHz,
+  logFraction,
+  pickPitchDrag,
+  type PitchDrag,
+  SPAN_OCTAVES,
+} from "../lib/pitch_line.ts";
 import { F0_MAX_HZ, F0_MIN_HZ } from "../lib/settings.ts";
 import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
 import { voicingAtom } from "../state/voicing.ts";
 
-/** 周波数 → 表示範囲内の位置 (0 = 最低音, 1 = 最高音) */
-const logFraction = (hz: number): number =>
-  (Math.log2(hz) - Math.log2(F0_MIN_HZ)) / (Math.log2(F0_MAX_HZ) - Math.log2(F0_MIN_HZ));
+/** ハンドルの当たり判定の許容距離 (px)。指でつかめる程度に広く */
+const GRAB_TOLERANCE_PX = 14;
 
 /** 位置 → SVG 座標 (%)。縦線では上が高音、横線では右が高音 */
 const toPercent = (fraction: number, isLandscape: boolean): string =>
@@ -39,11 +48,67 @@ const BandRect = ({ band, isLandscape }: { band: Band; isLandscape: boolean }) =
     : <rect className={band.className} y="0" height="100%" x={start} width={size} />;
 };
 
+/** つかめる中音域の端の印 */
+const EdgeMark = ({ hz, isLandscape }: { hz: number; isLandscape: boolean }) => {
+  const pos = toPercent(logFraction(hz), isLandscape);
+  return isLandscape
+    ? <line className="band-edge" x1="0" x2="100%" y1={pos} y2={pos} />
+    : <line className="band-edge" y1="0" y2="100%" x1={pos} x2={pos} />;
+};
+
 export const PitchLine = () => {
   const settings = useAtomValue(settingsAtom);
+  const updateSettings = useSetAtom(settingsAtom);
   const isLandscape = useAtomValue(isLandscapeAtom);
   const voicing = useAtomValue(voicingAtom);
   const { f0Hz } = settings;
+
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<(PitchDrag & { pointerId: number }) | null>(null);
+  // pointer イベントはレンダーをまたぐので、最新の設定を ref 経由で参照する
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  /** イベント位置 → 直線上の周波数と当たり判定の許容距離 (オクターブ) */
+  const eventHz = (
+    e: React.PointerEvent<SVGSVGElement>,
+  ): { hz: number; tolOct: number } | null => {
+    const svg = svgRef.current;
+    if (svg === null) return null;
+    const rect = svg.getBoundingClientRect();
+    const lengthPx = isLandscape ? rect.height : rect.width;
+    if (lengthPx <= 0) return null;
+    const fraction = isLandscape
+      ? 1 - (e.clientY - rect.top) / lengthPx
+      : (e.clientX - rect.left) / lengthPx;
+    return { hz: fractionToHz(fraction), tolOct: (GRAB_TOLERANCE_PX / lengthPx) * SPAN_OCTAVES };
+  };
+
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>): void => {
+    const point = eventHz(e);
+    if (point === null) return;
+    const drag = pickPitchDrag(settingsRef.current, point.hz, point.tolOct);
+    if (drag === null) return;
+    dragRef.current = { ...drag, pointerId: e.pointerId };
+    // 合成イベント (テスト) では capture に失敗してよい
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // noop
+    }
+  };
+
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>): void => {
+    const drag = dragRef.current;
+    if (drag === null || drag.pointerId !== e.pointerId) return;
+    const point = eventHz(e);
+    if (point === null) return;
+    updateSettings(applyPitchDrag(settingsRef.current, drag, point.hz));
+  };
+
+  const onPointerEnd = (e: React.PointerEvent<SVGSVGElement>): void => {
+    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
+  };
 
   const bands: readonly Band[] = [
     ...(settings.bassEnabled
@@ -67,8 +132,19 @@ export const PitchLine = () => {
     : { x1: "0%", y1: "50%", x2: "100%", y2: "50%" };
 
   return (
-    <svg className="pitch-line" role="img" aria-label="log 周波数直線">
+    <svg
+      ref={svgRef}
+      className="pitch-line"
+      role="img"
+      aria-label="log 周波数直線"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+    >
       {bands.map((band) => <BandRect key={band.className} band={band} isLandscape={isLandscape} />)}
+      <EdgeMark hz={f0Hz * settings.midMinRatio} isLandscape={isLandscape} />
+      <EdgeMark hz={f0Hz * settings.midMaxRatio} isLandscape={isLandscape} />
       <line className="pitch-axis" {...axis} />
       {OCTAVE_TICKS.map(({ label, hz }) => {
         const pos = toPercent(logFraction(hz), isLandscape);

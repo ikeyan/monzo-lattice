@@ -10,6 +10,7 @@ import {
   type GestureState,
   INITIAL_GESTURE,
   reduceGesture,
+  sameChord,
   sameTarget,
   type TouchTarget,
 } from "./touch.ts";
@@ -155,23 +156,101 @@ Deno.test("2 本以上タッチした窓ではパンに切り替わらない (§
   assertEquals(result.pans, []);
 });
 
-Deno.test("発音中のセル移動は即時に和音を変える (§6.4)", () => {
-  const moved = run([
+Deno.test("発音中のセル移動はバッチされ、窓の終わりに和音が変わる (§6.2, §6.4)", () => {
+  const slide = [
     down(1, 0, 0, 0),
     tick(100),
     moveAt(1, 510, 300, 200), // セル (1,0) の枠から 10px (3% = 3px 以上) 内側
-  ]);
-  assertEquals(moved.state.committed?.notes, [{ target: { x3: 1, yp: 0 }, fingerIds: [1] }]);
-  assertEquals(moved.state.mode, "sounding");
+  ];
+  const during = run([...slide, tick(250)]); // 窓 (200〜300) の途中
+  assertEquals(during.state.mode, "pending");
+  assertEquals(during.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
+  const after = run([...slide, tick(300)]);
+  assertEquals(after.state.mode, "sounding");
+  assertEquals(after.state.committed?.notes, [{ target: { x3: 1, yp: 0 }, fingerIds: [1] }]);
 });
 
-Deno.test("マージンより浅い移動ではセルが変わらない (§6.4)", () => {
+Deno.test("移動で開いた窓は後続の移動で延長されない (§6.2)", () => {
+  const { state } = run([
+    down(1, 0, 0, 0),
+    tick(100),
+    moveAt(1, 510, 300, 200), // (1,0) へ。窓は 200〜300
+    moveAt(1, 610, 300, 290), // 窓の中でさらに (2,0) へ
+    tick(300),
+  ]);
+  assertEquals(state.mode, "sounding");
+  assertEquals(state.committed?.notes, [{ target: { x3: 2, yp: 0 }, fingerIds: [1] }]);
+});
+
+Deno.test("マージンより浅い移動ではセルが変わらず窓も開かない (§6.4)", () => {
   const shallow = run([
     down(1, 0, 0, 0),
     tick(100),
     moveAt(1, 452, 300, 200), // セル (1,0) に入ったが枠から 2px (< 3px)
   ]);
+  assertEquals(shallow.state.mode, "sounding");
   assertEquals(shallow.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
+});
+
+Deno.test("和音を変えないイベントはバッチせず指の割り当てだけ即時更新する (§6.2)", () => {
+  const base = [down(1, 0, 0, 0), tick(100)];
+  // 発音中のセルへの 2 本目の指
+  const added = run([...base, down(2, 0, 0, 200)]);
+  assertEquals(added.state.mode, "sounding");
+  assertEquals(added.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1, 2] }]);
+  // 同じセルを押さえる指が残る up
+  const lifted = run([...base, down(2, 0, 0, 200), up(1, 300)]);
+  assertEquals(lifted.state.mode, "sounding");
+  assertEquals(lifted.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [2] }]);
+});
+
+Deno.test("発音中のセルの間を冗長な指が滑っても和音は変わらずバッチしない (§6.2, §6.4)", () => {
+  const { state } = run([
+    down(1, 0, 0, 0), // 底音 (0,0)
+    down(2, 1, 0, 10),
+    down(3, 1, 0, 20), // (1,0) に重ねた指
+    tick(100),
+    moveAt(3, 410, 300, 200), // 指 3 を (0,0) へ → monzo 集合 {(0,0),(1,0)} のまま
+  ]);
+  assertEquals(state.mode, "sounding");
+  assertEquals(state.committed?.notes.length, 2);
+});
+
+Deno.test("窓の間に変更が打ち消されたら窓を閉じ、次の変更は最初からバッチする (§6.2)", () => {
+  const cancel = [
+    down(1, 0, 0, 0),
+    tick(100), // {(0,0)} で sounding
+    moveAt(1, 510, 300, 200), // (1,0) へ → 窓 [200, 300]
+    moveAt(1, 410, 300, 250), // (0,0) へ戻る → 変更が打ち消される
+  ];
+  const canceled = run(cancel);
+  assertEquals(canceled.state.mode, "sounding");
+  assertEquals(canceled.state.windowEndsAt, null);
+  // 直後の down は古い窓の残り時間ではなく、改めて 1 バッチ期間かけて確定する
+  const added = [...cancel, down(2, 1, 1, 290)];
+  const during = run([...added, tick(330)]); // 古い窓の期限 (300) を過ぎても
+  assertEquals(during.state.mode, "pending");
+  assertEquals(during.state.committed?.notes.length, 1);
+  const after = run([...added, tick(390)]);
+  assertEquals(after.state.committed?.notes.length, 2);
+});
+
+Deno.test("monzo 集合が同じでも底音が変わるなら和音の変更としてバッチする (§6.2, §6.3)", () => {
+  // 指 1 (最古) と 2 が (0,0)、指 3 が (1,0)。指 1 を (1,0) へ滑らせると
+  // monzo 集合 {(0,0),(1,0)} は変わらないが底音が (0,0) → (1,0) に変わる
+  const slide = [
+    down(1, 0, 0, 0),
+    down(2, 0, 0, 10),
+    down(3, 1, 0, 20),
+    tick(100),
+    moveAt(1, 510, 300, 200), // 指 1 を (1,0) の内側へ
+  ];
+  const during = run(slide);
+  assertEquals(during.state.mode, "pending");
+  assertEquals(during.state.committed?.bass, { x3: 0, yp: 0 });
+  const after = run([...slide, tick(300)]);
+  assertEquals(after.state.mode, "sounding");
+  assertEquals(after.state.committed?.bass, { x3: 1, yp: 0 });
 });
 
 Deno.test("発音中の down/up で開く窓の間は前の和音が鳴り続ける (§6.2)", () => {
@@ -278,6 +357,12 @@ const assertInvariants = (s: GestureState): void => {
     assert(s.firstTouchTimes.has(id), "タッチ中の指は最初のタッチ時刻を持つ");
   }
   if (s.panEligible) assertEquals(s.mode, "pending");
+  if (s.mode === "pending") {
+    assert(
+      !sameChord(chordOf(s.active, s.firstTouchTimes), s.committed),
+      "窓が開いている間は確定待ちの和音変更がある (§6.2)",
+    );
+  }
 };
 
 Deno.test("どんなイベント列でも状態機械の不変条件が保たれる", () => {

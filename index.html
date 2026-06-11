@@ -87,10 +87,16 @@
         cursor: pointer;
       }
 
-      /* log 周波数直線 (仕様 §5.3) */
+      /* log 周波数直線 (仕様 §5.3)。f0・音域はドラッグで指定 (§2.1, §2.2) */
       .pitch-line {
         grid-area: pitch;
         background: #fafafa;
+        touch-action: none;
+        cursor: grab;
+      }
+      .band-edge {
+        stroke: rgba(40, 140, 90, 0.8);
+        stroke-width: 3;
       }
       .pitch-axis {
         stroke: #555;

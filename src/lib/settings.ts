@@ -73,10 +73,10 @@ export const F0_MIN_HZ = 27.5;
 export const F0_MAX_HZ = 4186.0;
 
 /** 音域比の許容範囲: f0 の ±6 オクターブ。制約 (§2.2) を常に満たせるよう段階的に上限を設ける */
-const RATIO_MIN = 1 / 64;
-const BASS_MIN_RATIO_MAX = 16;
-const MID_MIN_RATIO_MAX = 32;
-const MID_MAX_RATIO_MAX = 64;
+export const RATIO_MIN = 1 / 64;
+export const BASS_MIN_RATIO_MAX = 16;
+export const MID_MIN_RATIO_MAX = 32;
+export const MID_MAX_RATIO_MAX = 64;
 
 export const DEFAULT_SETTINGS: Settings = {
   f0Hz: 220,
