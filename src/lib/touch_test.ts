@@ -10,6 +10,7 @@ import {
   type GestureState,
   INITIAL_GESTURE,
   reduceGesture,
+  sameChord,
   sameTarget,
   type TouchTarget,
 } from "./touch.ts";
@@ -215,6 +216,25 @@ Deno.test("発音中のセルの間を冗長な指が滑っても和音は変わ
   assertEquals(state.committed?.notes.length, 2);
 });
 
+Deno.test("窓の間に変更が打ち消されたら窓を閉じ、次の変更は最初からバッチする (§6.2)", () => {
+  const cancel = [
+    down(1, 0, 0, 0),
+    tick(100), // {(0,0)} で sounding
+    moveAt(1, 510, 300, 200), // (1,0) へ → 窓 [200, 300]
+    moveAt(1, 410, 300, 250), // (0,0) へ戻る → 変更が打ち消される
+  ];
+  const canceled = run(cancel);
+  assertEquals(canceled.state.mode, "sounding");
+  assertEquals(canceled.state.windowEndsAt, null);
+  // 直後の down は古い窓の残り時間ではなく、改めて 1 バッチ期間かけて確定する
+  const added = [...cancel, down(2, 1, 1, 290)];
+  const during = run([...added, tick(330)]); // 古い窓の期限 (300) を過ぎても
+  assertEquals(during.state.mode, "pending");
+  assertEquals(during.state.committed?.notes.length, 1);
+  const after = run([...added, tick(390)]);
+  assertEquals(after.state.committed?.notes.length, 2);
+});
+
 Deno.test("monzo 集合が同じでも底音が変わるなら和音の変更としてバッチする (§6.2, §6.3)", () => {
   // 指 1 (最古) と 2 が (0,0)、指 3 が (1,0)。指 1 を (1,0) へ滑らせると
   // monzo 集合 {(0,0),(1,0)} は変わらないが底音が (0,0) → (1,0) に変わる
@@ -337,6 +357,12 @@ const assertInvariants = (s: GestureState): void => {
     assert(s.firstTouchTimes.has(id), "タッチ中の指は最初のタッチ時刻を持つ");
   }
   if (s.panEligible) assertEquals(s.mode, "pending");
+  if (s.mode === "pending") {
+    assert(
+      !sameChord(chordOf(s.active, s.firstTouchTimes), s.committed),
+      "窓が開いている間は確定待ちの和音変更がある (§6.2)",
+    );
+  }
 };
 
 Deno.test("どんなイベント列でも状態機械の不変条件が保たれる", () => {
