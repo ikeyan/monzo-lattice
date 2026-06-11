@@ -191,6 +191,48 @@ Deno.test("マージンより浅い移動ではセルが変わらず窓も開か
   assertEquals(shallow.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1] }]);
 });
 
+Deno.test("和音を変えないイベントはバッチせず指の割り当てだけ即時更新する (§6.2)", () => {
+  const base = [down(1, 0, 0, 0), tick(100)];
+  // 発音中のセルへの 2 本目の指
+  const added = run([...base, down(2, 0, 0, 200)]);
+  assertEquals(added.state.mode, "sounding");
+  assertEquals(added.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [1, 2] }]);
+  // 同じセルを押さえる指が残る up
+  const lifted = run([...base, down(2, 0, 0, 200), up(1, 300)]);
+  assertEquals(lifted.state.mode, "sounding");
+  assertEquals(lifted.state.committed?.notes, [{ target: { x3: 0, yp: 0 }, fingerIds: [2] }]);
+});
+
+Deno.test("発音中のセルの間を冗長な指が滑っても和音は変わらずバッチしない (§6.2, §6.4)", () => {
+  const { state } = run([
+    down(1, 0, 0, 0), // 底音 (0,0)
+    down(2, 1, 0, 10),
+    down(3, 1, 0, 20), // (1,0) に重ねた指
+    tick(100),
+    moveAt(3, 410, 300, 200), // 指 3 を (0,0) へ → monzo 集合 {(0,0),(1,0)} のまま
+  ]);
+  assertEquals(state.mode, "sounding");
+  assertEquals(state.committed?.notes.length, 2);
+});
+
+Deno.test("monzo 集合が同じでも底音が変わるなら和音の変更としてバッチする (§6.2, §6.3)", () => {
+  // 指 1 (最古) と 2 が (0,0)、指 3 が (1,0)。指 1 を (1,0) へ滑らせると
+  // monzo 集合 {(0,0),(1,0)} は変わらないが底音が (0,0) → (1,0) に変わる
+  const slide = [
+    down(1, 0, 0, 0),
+    down(2, 0, 0, 10),
+    down(3, 1, 0, 20),
+    tick(100),
+    moveAt(1, 510, 300, 200), // 指 1 を (1,0) の内側へ
+  ];
+  const during = run(slide);
+  assertEquals(during.state.mode, "pending");
+  assertEquals(during.state.committed?.bass, { x3: 0, yp: 0 });
+  const after = run([...slide, tick(300)]);
+  assertEquals(after.state.mode, "sounding");
+  assertEquals(after.state.committed?.bass, { x3: 1, yp: 0 });
+});
+
 Deno.test("発音中の down/up で開く窓の間は前の和音が鳴り続ける (§6.2)", () => {
   const { state } = run([down(1, 0, 0, 0), tick(100), down(2, 1, 0, 200), tick(250)]);
   // 2 本目の down 直後〜窓の終わりまでは前の和音のまま

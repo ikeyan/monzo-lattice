@@ -5,13 +5,14 @@
  * イベントの引数で受け取り、バッチ期限のタイマーは呼び出し側 (RxJS アダプタ) が
  * windowEndsAt に合わせて tick イベントを注入する。
  *
- * - バッチ化 (§6.2): 最初の down/up から batchMs の間、和音の変更を保留する。
+ * - バッチ化 (§6.2): 和音 (ボイシング前 = 構成 monzo の集合と底音) を変える最初の
+ *   イベントから batchMs の間、変更を保留する。down/up もセル移動も等しく対象。
  *   窓の中のイベントは窓を延長しない。窓の終わりに正味の状態を確定 (発音) する。
+ *   和音を変えないイベントはバッチせず、指の割り当てだけを即時更新する。
  * - 底音 (§6.3, §6.5): 指ごとに最初のタッチ時刻を記憶し、タッチ中で最古の指が底音。
  *   記憶は和音が完全に終わる (idle に戻る) まで保持するので、再タッチした指は
  *   元の時刻で底音を取り戻す。
  * - セル移動 (§6.4): 移動先セルの枠から 3% より中に入って初めて移動と判定。
- *   発音中の移動も down/up と同様に窓を開いてバッチする (§6.2)。
  * - パン (§6.6): タッチなしの状態から開いた窓の間に、単独の指が閾値を超えて
  *   動いたら和音を作らずパンに切り替える。
  */
@@ -39,6 +40,16 @@ export type Chord = Readonly<{
   /** 底音 (notes のいずれかの target) */
   bass: TouchTarget;
 }>;
+
+/**
+ * 和音の同一性 (§6.2): 構成 monzo の集合と底音の組。
+ * どの指がどの monzo を押さえているか (fingerIds) は含まない。
+ */
+export const sameChord = (a: Chord | null, b: Chord | null): boolean =>
+  a === null || b === null
+    ? a === b
+    : sameTarget(a.bass, b.bass) && a.notes.length === b.notes.length &&
+      a.notes.every((n) => b.notes.some((m) => sameTarget(m.target, n.target)));
 
 export type GestureMode = "idle" | "pending" | "sounding" | "panning";
 
@@ -148,6 +159,29 @@ export const cellWithMargin = (
   return depth >= marginFrac * s ? hit : current;
 };
 
+/**
+ * 発音中 (sounding) の active の変更を反映する (§6.2)。和音 (monzo 集合と底音)
+ * が変わるなら新しいバッチ窓を開き (窓の間は前の和音が鳴り続ける)、
+ * 変わらなければ指の割り当てだけを即時更新する。
+ */
+const soundingUpdate = (
+  state: GestureState,
+  at: number,
+  config: GestureConfig,
+  changes: Readonly<Partial<Pick<GestureState, "active" | "firstTouchTimes">>>,
+): GestureState => {
+  const next = { ...state, ...changes };
+  const chord = chordOf(next.active, next.firstTouchTimes);
+  if (sameChord(chord, state.committed)) return { ...next, committed: chord };
+  return {
+    ...next,
+    mode: "pending",
+    windowEndsAt: at + config.batchMs,
+    panEligible: false,
+    firstDown: null,
+  };
+};
+
 const onDown = (
   state: GestureState,
   event: Extract<GestureEvent, { type: "down" }>,
@@ -174,16 +208,7 @@ const onDown = (
     // 窓は延長しない (§6.2 は「最初の」イベントから)
     return still({ ...state, firstTouchTimes, active, panEligible: false });
   }
-  // sounding: 新しい窓を開く
-  return still({
-    ...state,
-    mode: "pending",
-    windowEndsAt: event.at + config.batchMs,
-    firstTouchTimes,
-    active,
-    panEligible: false,
-    firstDown: null,
-  });
+  return still(soundingUpdate(state, event.at, config, { firstTouchTimes, active }));
 };
 
 const onUp = (
@@ -199,15 +224,7 @@ const onUp = (
   if (state.mode === "pending") {
     return still({ ...state, active, panEligible: false });
   }
-  // sounding: 新しい窓を開く (窓の間は前の和音が鳴り続ける)
-  return still({
-    ...state,
-    mode: "pending",
-    windowEndsAt: event.at + config.batchMs,
-    active,
-    panEligible: false,
-    firstDown: null,
-  });
+  return still(soundingUpdate(state, event.at, config, { active }));
 };
 
 const onMove = (
@@ -250,15 +267,7 @@ const onMove = (
   if (sameTarget(next, current)) return still(state);
   const active = mapSet(state.active, event.pointerId, next);
   if (state.mode === "sounding") {
-    // §6.2: 移動による和音変更もバッチする。新しい窓を開き、窓の間は前の和音が鳴り続ける
-    return still({
-      ...state,
-      mode: "pending",
-      windowEndsAt: event.at + config.batchMs,
-      active,
-      panEligible: false,
-      firstDown: null,
-    });
+    return still(soundingUpdate(state, event.at, config, { active }));
   }
   return still({ ...state, active });
 };
