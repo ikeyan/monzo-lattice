@@ -2,9 +2,10 @@
  * 格子ビューの幾何 (仕様 §3)。
  *
  * 格子平面の座標は (x3, yp): セル (x3, yp) は 3^x3 · p^yp に対応する。
- * 画面上では長辺方向に 3 の軸、短辺方向に p の軸を割り当てる:
+ * 画面上では長辺方向に 3 の軸、短辺方向に p の軸を割り当てる。向きは
+ * 3 の軸を反時計回りに 90° 回すと p の軸に一致するように統一する:
  * - 横長 (isWide): 画面右 = +x3、画面上 = +yp
- * - 縦長: 画面上 = +x3、画面右 = +yp
+ * - 縦長: 画面下 = +x3、画面右 = +yp
  */
 
 export type PanOffset = Readonly<{
@@ -39,7 +40,7 @@ export type CellPlacement = Readonly<{
 const originCenter = ({ width, height, pan, isWide }: ViewGeometry): { cx: number; cy: number } =>
   isWide
     ? { cx: width / 2 + pan.a3, cy: height / 2 - pan.ap }
-    : { cx: width / 2 + pan.ap, cy: height / 2 - pan.a3 };
+    : { cx: width / 2 + pan.ap, cy: height / 2 + pan.a3 };
 
 /** セル (x3, yp) の中心の画面座標 */
 const cellCenter = (geo: ViewGeometry, x3: number, yp: number): { cx: number; cy: number } => {
@@ -47,7 +48,7 @@ const cellCenter = (geo: ViewGeometry, x3: number, yp: number): { cx: number; cy
   const s = geo.cellSizePx;
   return geo.isWide
     ? { cx: o.cx + x3 * s, cy: o.cy - yp * s }
-    : { cx: o.cx + yp * s, cy: o.cy - x3 * s };
+    : { cx: o.cx + yp * s, cy: o.cy + x3 * s };
 };
 
 /** セル (x3, yp) の矩形の左上の画面座標 */
@@ -70,7 +71,7 @@ export const cellAtPoint = (
   const s = geo.cellSizePx;
   const u = Math.round((px - o.cx) / s);
   const v = Math.round((o.cy - py) / s);
-  return geo.isWide ? { x3: u, yp: v } : { x3: v, yp: u };
+  return geo.isWide ? { x3: u, yp: v } : { x3: -v, yp: u };
 };
 
 /** [lo, hi] と交差するセル中心インデックスの範囲 (中心 ± s/2 が範囲に触れるもの) */
@@ -84,12 +85,12 @@ const indexRange = (center0: number, s: number, lo: number, hi: number): readonl
 export const visibleCells = (geo: ViewGeometry): readonly CellPlacement[] => {
   const { width, height, cellSizePx: s, isWide } = geo;
   const o = originCenter(geo);
-  // 画面 x 方向・y 方向のセルインデックス (横長: x→x3, y→-yp / 縦長: x→yp, y→-x3)
+  // 画面 x 方向・y 方向のセルインデックス (横長: x→x3, y→-yp / 縦長: x→yp, y→x3)
   const xs = indexRange(o.cx, s, 0, width);
   const ys = indexRange(o.cy, s, 0, height);
   return xs.flatMap((u) =>
     ys.map((w) => {
-      const [x3, yp] = isWide ? [u, -w] : [-w, u];
+      const [x3, yp] = isWide ? [u, -w] : [w, u];
       const { cx, cy } = cellCenter(geo, x3, yp);
       return { x3, yp, left: cx - s / 2, top: cy - s / 2 };
     })
@@ -105,4 +106,4 @@ export const applyPanDelta = (
 ): PanOffset =>
   isWide
     ? { a3: pan.a3 + dxScreen, ap: pan.ap - dyScreen }
-    : { a3: pan.a3 - dyScreen, ap: pan.ap + dxScreen };
+    : { a3: pan.a3 + dyScreen, ap: pan.ap + dxScreen };

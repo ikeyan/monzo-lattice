@@ -10,6 +10,10 @@ import { LATTICE_PRIMES, type LatticePrime } from "./monzo.ts";
 export const TIMBRES = ["sine", "triangle", "guitar", "xylophone"] as const;
 export type Timbre = (typeof TIMBRES)[number];
 
+/** 演奏モード (仕様 §6.7): 直接 = 格子タッチで即発音、アルペジオ = 和音指定と発音を分離 */
+export const PLAY_MODES = ["direct", "arpeggio"] as const;
+export type PlayMode = (typeof PLAY_MODES)[number];
+
 /** セル移動時のノートの扱い (仕様 §6.4) */
 export const NOTE_MOVE_MODES = ["retrigger", "glide"] as const;
 export type NoteMoveMode = (typeof NOTE_MOVE_MODES)[number];
@@ -66,6 +70,8 @@ export type Settings = Readonly<{
   adsr: Adsr;
   reverb: Reverb;
   chordTransitionMode: ChordTransitionMode;
+  /** 演奏モード (§6.7) */
+  playMode: PlayMode;
 }>;
 
 /** 88 鍵ピアノの音域 (§2.1)。log 周波数直線の表示範囲でもある (§5.3) */
@@ -95,6 +101,7 @@ export const DEFAULT_SETTINGS: Settings = {
   adsr: { attackMs: 10, decayMs: 200, sustainLevel: 0.7, releaseMs: 300 },
   reverb: { mix: 0.2, decaySec: 1.5 },
   chordTransitionMode: "independent",
+  playMode: "direct",
 };
 
 const clamp = (x: number, min: number, max: number): number => Math.min(max, Math.max(min, x));
@@ -162,5 +169,6 @@ export const sanitizeSettings = (input: unknown): Settings => {
       CHORD_TRANSITION_MODES,
       d.chordTransitionMode,
     ),
+    playMode: pick<PlayMode>(v["playMode"], PLAY_MODES, d.playMode),
   };
 };

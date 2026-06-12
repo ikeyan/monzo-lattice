@@ -25,6 +25,18 @@ const center = (c: { left: number; top: number }, s: number): readonly [number, 
   c.top + s / 2,
 ];
 
+Deno.test("軸の向き (§3): 3 軸を反時計回りに 90° 回すと p 軸に一致する", () => {
+  const geo = (isWide: boolean): ViewGeometry => (
+    { width: 400, height: 400, cellSizePx: 100, pan: PAN_ZERO, isWide }
+  );
+  // 横長: 右 = +x3、上 = +yp
+  assertEquals(cellAtPoint(geo(true), 300, 200), { x3: 1, yp: 0 });
+  assertEquals(cellAtPoint(geo(true), 200, 100), { x3: 0, yp: 1 });
+  // 縦長: 下 = +x3、右 = +yp
+  assertEquals(cellAtPoint(geo(false), 200, 300), { x3: 1, yp: 0 });
+  assertEquals(cellAtPoint(geo(false), 300, 200), { x3: 0, yp: 1 });
+});
+
 Deno.test("可視セルはすべてビューポートと交差する", () => {
   fc.assert(
     fc.property(arbGeometry, (geo) => {

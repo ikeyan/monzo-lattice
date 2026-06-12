@@ -55,6 +55,61 @@ const clamp = (x: number, min: number, max: number): number => Math.min(max, Mat
 
 const octDistance = (aHz: number, bHz: number): number => Math.abs(Math.log2(aHz) - Math.log2(bHz));
 
+/**
+ * hz から log2 距離 tolOct 以内で最も近い候補の添字。なければ -1。
+ * アルペジオモード (§6.7) のノートタッチの当たり判定に使う。
+ */
+export const nearestIndexWithin = (
+  candidatesHz: readonly number[],
+  hz: number,
+  tolOct: number,
+): number => {
+  let best = -1;
+  let bestDist = tolOct;
+  for (let i = 0; i < candidatesHz.length; i++) {
+    const c = candidatesHz[i];
+    if (c === undefined || !(c > 0)) continue;
+    const dist = octDistance(c, hz);
+    if (dist <= bestDist) {
+      best = i;
+      bestDist = dist;
+    }
+  }
+  return best;
+};
+
+/**
+ * アルペジオモード (§6.7) の指 1 本分の選択。選択中のノートが発音される。
+ *
+ * - 単音選択: ノートの上でタッチ開始した指。スライドすると最寄りのノートに移る。
+ * - 範囲選択: ノート以外の場所でタッチ開始した指。開始点と現在点の間の
+ *   ノートを全て選択する (サステイン用)。当たり判定の許容距離 (tolOct) の
+ *   ぶんだけ両端に余裕を持たせる。
+ */
+export type PitchSelection =
+  | Readonly<{ kind: "single"; noteKey: string }>
+  | Readonly<{ kind: "range"; anchorLog2: number; headLog2: number; tolOct: number }>;
+
+/** 範囲選択の実効区間 (log2、許容距離込み) */
+export const rangeBounds = (
+  sel: Extract<PitchSelection, { kind: "range" }>,
+): { lo: number; hi: number } => ({
+  lo: Math.min(sel.anchorLog2, sel.headLog2) - sel.tolOct,
+  hi: Math.max(sel.anchorLog2, sel.headLog2) + sel.tolOct,
+});
+
+/** 選択がノート (キーと周波数) を含むか */
+export const selectionContains = (
+  sel: PitchSelection,
+  noteKey: string,
+  noteHz: number,
+): boolean => {
+  if (sel.kind === "single") return sel.noteKey === noteKey;
+  const { lo, hi } = rangeBounds(sel);
+  const l = Math.log2(noteHz);
+  return lo <= l && l <= hi;
+};
+
 const grab = (kind: PitchDragKind, anchorHz: number, hz: number): PitchDrag => ({
   kind,
   grabLog2: Math.log2(anchorHz) - Math.log2(hz),

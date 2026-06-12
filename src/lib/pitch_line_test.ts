@@ -4,8 +4,10 @@ import {
   applyPitchDrag,
   fractionToHz,
   logFraction,
+  nearestIndexWithin,
   pickPitchDrag,
   type PitchDragKind,
+  selectionContains,
 } from "./pitch_line.ts";
 import { F0_MAX_HZ, F0_MIN_HZ, sanitizeSettings, type Settings } from "./settings.ts";
 
@@ -152,4 +154,50 @@ Deno.test("可動範囲内ではハンドルはつかんだ点に正確に追従
       assert(relClose(update.midMaxRatio ?? NaN, target));
     }),
   );
+});
+
+Deno.test("nearestIndexWithin: 許容距離内で log2 距離が最小の候補を返す", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.double({ min: F0_MIN_HZ, max: F0_MAX_HZ, noNaN: true }), { maxLength: 10 }),
+      fc.double({ min: F0_MIN_HZ, max: F0_MAX_HZ, noNaN: true }),
+      fc.double({ min: 0.001, max: 1, noNaN: true }),
+      (candidates, hz, tolOct) => {
+        const dist = (c: number) => Math.abs(Math.log2(c) - Math.log2(hz));
+        const idx = nearestIndexWithin(candidates, hz, tolOct);
+        if (idx === -1) {
+          assert(candidates.every((c) => dist(c) > tolOct));
+        } else {
+          const c = candidates[idx] ?? NaN;
+          assert(dist(c) <= tolOct);
+          assert(candidates.every((other) => dist(c) <= dist(other)));
+        }
+      },
+    ),
+  );
+});
+
+Deno.test("範囲選択 (§6.7) は anchor/head の順序によらず、許容距離込みの区間を選択する", () => {
+  fc.assert(
+    fc.property(
+      fc.double({ min: 1, max: 12, noNaN: true }),
+      fc.double({ min: 1, max: 12, noNaN: true }),
+      fc.double({ min: 0, max: 0.5, noNaN: true }),
+      fc.double({ min: F0_MIN_HZ, max: F0_MAX_HZ, noNaN: true }),
+      (anchorLog2, headLog2, tolOct, noteHz) => {
+        const sel = { kind: "range" as const, anchorLog2, headLog2, tolOct };
+        const swapped = { ...sel, anchorLog2: headLog2, headLog2: anchorLog2 };
+        const expected = Math.min(anchorLog2, headLog2) - tolOct <= Math.log2(noteHz) &&
+          Math.log2(noteHz) <= Math.max(anchorLog2, headLog2) + tolOct;
+        assertEquals(selectionContains(sel, "k", noteHz), expected);
+        assertEquals(selectionContains(swapped, "k", noteHz), expected);
+      },
+    ),
+  );
+});
+
+Deno.test("単音選択 (§6.7) はキーの一致だけで決まる", () => {
+  const sel = { kind: "single" as const, noteKey: "m:1.5" };
+  assert(selectionContains(sel, "m:1.5", 100));
+  assert(!selectionContains(sel, "b:1.5", 100));
 });

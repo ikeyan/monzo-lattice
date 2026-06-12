@@ -3,27 +3,51 @@
  *
  * 88 鍵の範囲 (§2.1) を log スケールで表示し、f0・ベース音域・中音域を示す。
  * 横長画面では左に縦線、縦長画面では下に横線 (§5.1)。
- * f0 と音域はドラッグで指定できる (§2.1, §2.2)。当たり判定とドラッグの数式は
- * lib/pitch_line.ts の純粋関数に置き、ここでは pointer イベントの配線だけを行う。
+ * 直接モードでは f0 と音域をドラッグで指定できる (§2.1, §2.2)。
+ * アルペジオモード (§6.7) ではドラッグは無効になり、代わりに指ごとの選択を作る:
+ * ノートの上から始めると単音選択 (スライドで最寄りのノートに移る)、
+ * ノート以外から始めてスライドすると範囲選択 (サステイン用)。
+ * 選択中のノートが発音される (§6.7 の OR の項になる)。
+ * 当たり判定とドラッグの数式は lib/pitch_line.ts の純粋関数に置き、
+ * ここでは pointer イベントの配線だけを行う。
  */
 
 import { useAtomValue, useSetAtom } from "jotai";
 import { useRef } from "react";
+import { ensureAudioReady } from "../lib/audio.ts";
 import {
   applyPitchDrag,
   fractionToHz,
   logFraction,
+  nearestIndexWithin,
   pickPitchDrag,
   type PitchDrag,
+  type PitchSelection,
+  rangeBounds,
+  selectionContains,
   SPAN_OCTAVES,
 } from "../lib/pitch_line.ts";
 import { F0_MAX_HZ, F0_MIN_HZ } from "../lib/settings.ts";
+import { voicedNoteKey } from "../lib/voicing.ts";
 import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
+import { glideHeldAtom, pitchSelectionsAtom, rhythmHeldAtom } from "../state/sounding.ts";
 import { voicingAtom } from "../state/voicing.ts";
 
 /** ハンドルの当たり判定の許容距離 (px)。指でつかめる程度に広く */
 const GRAB_TOLERANCE_PX = 14;
+
+/** ノートタッチ (§6.7) の当たり判定の許容距離 (px)。叩く操作なのでさらに広く */
+const NOTE_TOLERANCE_PX = 20;
+
+const capturePointer = (e: React.PointerEvent<SVGSVGElement>): void => {
+  // 合成イベント (テスト) では capture に失敗してよい
+  try {
+    e.currentTarget.setPointerCapture(e.pointerId);
+  } catch {
+    // noop
+  }
+};
 
 /** 位置 → SVG 座標 (%)。縦線では上が高音、横線では右が高音 */
 const toPercent = (fraction: number, isLandscape: boolean): string =>
@@ -61,7 +85,12 @@ export const PitchLine = () => {
   const updateSettings = useSetAtom(settingsAtom);
   const isLandscape = useAtomValue(isLandscapeAtom);
   const voicing = useAtomValue(voicingAtom);
+  const rhythmHeld = useAtomValue(rhythmHeldAtom);
+  const glideHeld = useAtomValue(glideHeldAtom);
+  const selections = useAtomValue(pitchSelectionsAtom);
+  const setSelections = useSetAtom(pitchSelectionsAtom);
   const { f0Hz } = settings;
+  const isArpeggio = settings.playMode === "arpeggio";
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<(PitchDrag & { pointerId: number }) | null>(null);
@@ -69,10 +98,10 @@ export const PitchLine = () => {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  /** イベント位置 → 直線上の周波数と当たり判定の許容距離 (オクターブ) */
+  /** イベント位置 → 直線上の周波数と、px → オクターブの換算係数 */
   const eventHz = (
     e: React.PointerEvent<SVGSVGElement>,
-  ): { hz: number; tolOct: number } | null => {
+  ): { hz: number; octPerPx: number } | null => {
     const svg = svgRef.current;
     if (svg === null) return null;
     const rect = svg.getBoundingClientRect();
@@ -81,24 +110,64 @@ export const PitchLine = () => {
     const fraction = isLandscape
       ? 1 - (e.clientY - rect.top) / lengthPx
       : (e.clientX - rect.left) / lengthPx;
-    return { hz: fractionToHz(fraction), tolOct: (GRAB_TOLERANCE_PX / lengthPx) * SPAN_OCTAVES };
+    return { hz: fractionToHz(fraction), octPerPx: SPAN_OCTAVES / lengthPx };
   };
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>): void => {
     const point = eventHz(e);
     if (point === null) return;
-    const drag = pickPitchDrag(settingsRef.current, point.hz, point.tolOct);
+    if (isArpeggio) {
+      // 指ごとの選択を開始する (§6.7)。f0・音域のドラッグはこのモードでは無効
+      ensureAudioReady();
+      const tolOct = NOTE_TOLERANCE_PX * point.octPerPx;
+      const notes = voicing?.notes ?? [];
+      const idx = nearestIndexWithin(
+        notes.map((v) => settingsRef.current.f0Hz * v.finalRatio),
+        point.hz,
+        tolOct,
+      );
+      const note = idx >= 0 ? notes[idx] : undefined;
+      // ノートの上なら単音選択、そうでなければその点から始まる範囲選択
+      const sel: PitchSelection = note !== undefined
+        ? { kind: "single", noteKey: voicedNoteKey(note) }
+        : { kind: "range", anchorLog2: Math.log2(point.hz), headLog2: Math.log2(point.hz), tolOct };
+      setSelections((prev) => new Map(prev).set(e.pointerId, sel));
+      capturePointer(e);
+      return;
+    }
+    const drag = pickPitchDrag(settingsRef.current, point.hz, GRAB_TOLERANCE_PX * point.octPerPx);
     if (drag === null) return;
     dragRef.current = { ...drag, pointerId: e.pointerId };
-    // 合成イベント (テスト) では capture に失敗してよい
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // noop
-    }
+    capturePointer(e);
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>): void => {
+    if (isArpeggio) {
+      const sel = selections.get(e.pointerId);
+      if (sel === undefined) return;
+      const point = eventHz(e);
+      if (point === null) return;
+      if (sel.kind === "range") {
+        // 範囲選択: 開始点と現在点の間を選択し続ける
+        const headLog2 = Math.log2(point.hz);
+        if (headLog2 === sel.headLog2) return;
+        setSelections((prev) => new Map(prev).set(e.pointerId, { ...sel, headLog2 }));
+        return;
+      }
+      // 単音選択: 最寄りのノートに移る (グリッサンド)
+      const notes = voicing?.notes ?? [];
+      const idx = nearestIndexWithin(
+        notes.map((v) => settingsRef.current.f0Hz * v.finalRatio),
+        point.hz,
+        Infinity,
+      );
+      const note = idx >= 0 ? notes[idx] : undefined;
+      if (note === undefined) return;
+      const noteKey = voicedNoteKey(note);
+      if (noteKey === sel.noteKey) return;
+      setSelections((prev) => new Map(prev).set(e.pointerId, { kind: "single", noteKey }));
+      return;
+    }
     const drag = dragRef.current;
     if (drag === null || drag.pointerId !== e.pointerId) return;
     const point = eventHz(e);
@@ -108,6 +177,13 @@ export const PitchLine = () => {
 
   const onPointerEnd = (e: React.PointerEvent<SVGSVGElement>): void => {
     if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
+    // 指を離すとその指の選択は解除される (§6.7)
+    setSelections((prev) => {
+      if (!prev.has(e.pointerId)) return prev;
+      const next = new Map(prev);
+      next.delete(e.pointerId);
+      return next;
+    });
   };
 
   const bands: readonly Band[] = [
@@ -134,7 +210,7 @@ export const PitchLine = () => {
   return (
     <svg
       ref={svgRef}
-      className="pitch-line"
+      className={isArpeggio ? "pitch-line arpeggio" : "pitch-line"}
       role="img"
       aria-label="log 周波数直線"
       onPointerDown={onPointerDown}
@@ -145,6 +221,18 @@ export const PitchLine = () => {
       {bands.map((band) => <BandRect key={band.className} band={band} isLandscape={isLandscape} />)}
       <EdgeMark hz={f0Hz * settings.midMinRatio} isLandscape={isLandscape} />
       <EdgeMark hz={f0Hz * settings.midMaxRatio} isLandscape={isLandscape} />
+      {/* 範囲選択 (§6.7) の実効区間 */}
+      {isArpeggio && [...selections.entries()].map(([pointerId, sel]) => {
+        if (sel.kind !== "range") return null;
+        const { lo, hi } = rangeBounds(sel);
+        return (
+          <BandRect
+            key={`sel-${pointerId}`}
+            band={{ className: "selection-range", minHz: 2 ** lo, maxHz: 2 ** hi }}
+            isLandscape={isLandscape}
+          />
+        );
+      })}
       <line className="pitch-axis" {...axis} />
       {OCTAVE_TICKS.map(({ label, hz }) => {
         const pos = toPercent(logFraction(hz), isLandscape);
@@ -186,15 +274,23 @@ export const PitchLine = () => {
             </g>
           );
       })()}
-      {/* ボイシング結果 (§7.5): 現在鳴っている各音の音高 */}
+      {/* ボイシング結果 (§7.5)。アルペジオモードでは発音されていないノートを淡く描く */}
       {voicing?.notes.map((v, i) => {
         const hz = f0Hz * v.finalRatio;
         if (hz < F0_MIN_HZ || hz > F0_MAX_HZ) return null;
         const pos = toPercent(logFraction(hz), isLandscape);
-        const className = v.isBassRange ? "voiced-note voiced-bass" : "voiced-note";
+        const key = voicedNoteKey(v);
+        const isSounding = !isArpeggio || rhythmHeld || glideHeld ||
+          [...selections.values()].some((sel) => selectionContains(sel, key, hz));
+        const className = [
+          "voiced-note",
+          v.isBassRange ? "voiced-bass" : "",
+          isSounding ? "" : "silent",
+        ].filter((s) => s !== "").join(" ");
+        const r = isArpeggio ? 7 : 5;
         return isLandscape
-          ? <circle key={i} className={className} cx="50%" cy={pos} r="5" />
-          : <circle key={i} className={className} cx={pos} cy="50%" r="5" />;
+          ? <circle key={i} className={className} cx="50%" cy={pos} r={r} />
+          : <circle key={i} className={className} cx={pos} cy="50%" r={r} />;
       })}
     </svg>
   );
