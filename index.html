@@ -174,9 +174,13 @@
       .voiced-note.voiced-bass {
         fill: rgba(230, 80, 80, 0.9);
       }
-      /* アルペジオモード (§6.7): 発音指定されていないノートは淡く */
+      /* アルペジオモード (§6.7): 発音されていないノートは淡く */
       .voiced-note.silent {
         opacity: 0.35;
+      }
+      /* 範囲選択 (§6.7) の実効区間 */
+      .selection-range {
+        fill: rgba(255, 170, 40, 0.35);
       }
       .pitch-line.arpeggio {
         cursor: pointer;

@@ -6,7 +6,7 @@ import { LATTICE_PRIMES, type LatticePrime } from "../lib/monzo.ts";
 import { PLAY_MODES, type PlayMode } from "../lib/settings.ts";
 import { beanDragAtom } from "../state/beans.ts";
 import { settingsAtom } from "../state/settings.ts";
-import { heldNoteKeysAtom } from "../state/sounding.ts";
+import { pitchSelectionsAtom } from "../state/sounding.ts";
 import { settingsOpenAtom } from "../state/ui.ts";
 import { TimbreSelector } from "./timbre_icons.tsx";
 
@@ -19,7 +19,7 @@ export const Header = () => {
   const [settings, updateSettings] = useAtom(settingsAtom);
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const setBeanDrag = useSetAtom(beanDragAtom);
-  const setHeldNotes = useSetAtom(heldNoteKeysAtom);
+  const setSelections = useSetAtom(pitchSelectionsAtom);
   return (
     <header className="header">
       <label className="header-item">
@@ -41,7 +41,7 @@ export const Header = () => {
         onChange={(timbre) => updateSettings({ timbre })}
       />
       {
-        /* 演奏モード (§6.7)。切り替え時にタッチ中ノートの発音状態をクリアする
+        /* 演奏モード (§6.7)。切り替え時に指の選択をクリアする
           (リズム・グライドの押下状態は SoundControl のアンマウントで解除される) */
       }
       <label className="header-item" title="演奏モード">
@@ -49,7 +49,7 @@ export const Header = () => {
           value={settings.playMode}
           onChange={(e) => {
             updateSettings({ playMode: e.currentTarget.value as PlayMode });
-            setHeldNotes(new Map());
+            setSelections(new Map());
           }}
         >
           {PLAY_MODES.map((m) => (

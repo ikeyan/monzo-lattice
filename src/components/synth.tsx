@@ -3,10 +3,11 @@
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useRef } from "react";
 import { getAudioContext } from "../lib/audio.ts";
+import { selectionContains } from "../lib/pitch_line.ts";
 import { createSynth, type Synth as SynthHandle } from "../lib/synth.ts";
 import { voicedNoteKey } from "../lib/voicing.ts";
 import { settingsAtom } from "../state/settings.ts";
-import { glideHeldAtom, heldNoteKeysAtom, rhythmHeldAtom } from "../state/sounding.ts";
+import { glideHeldAtom, pitchSelectionsAtom, rhythmHeldAtom } from "../state/sounding.ts";
 import { voicingAtom } from "../state/voicing.ts";
 
 export const Synth = () => {
@@ -14,16 +15,21 @@ export const Synth = () => {
   const settings = useAtomValue(settingsAtom);
   const rhythmHeld = useAtomValue(rhythmHeldAtom);
   const glideHeld = useAtomValue(glideHeldAtom);
-  const heldNotes = useAtomValue(heldNoteKeysAtom);
+  const selections = useAtomValue(pitchSelectionsAtom);
   const synthRef = useRef<SynthHandle | null>(null);
 
-  // アルペジオモード (§6.7): 発音する ⇔ ノートをタッチ中 ∨ リズム ∨ グライド (OR)
+  // アルペジオモード (§6.7): 発音する ⇔ いずれかの指の選択に含まれる ∨ リズム ∨ グライド
   const gatedVoicing = useMemo(() => {
     if (settings.playMode !== "arpeggio" || voicing === null) return voicing;
     if (rhythmHeld || glideHeld) return voicing;
-    const held = new Set(heldNotes.values());
-    return { ...voicing, notes: voicing.notes.filter((v) => held.has(voicedNoteKey(v))) };
-  }, [voicing, settings.playMode, rhythmHeld, glideHeld, heldNotes]);
+    const sels = [...selections.values()];
+    return {
+      ...voicing,
+      notes: voicing.notes.filter((v) =>
+        sels.some((sel) => selectionContains(sel, voicedNoteKey(v), settings.f0Hz * v.finalRatio))
+      ),
+    };
+  }, [voicing, settings.playMode, settings.f0Hz, rhythmHeld, glideHeld, selections]);
 
   // グライドボタン (§5.6) を押している間はセル移動時のノートをグライドにする
   const effectiveSettings = useMemo(
