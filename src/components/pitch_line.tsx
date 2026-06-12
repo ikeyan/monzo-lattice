@@ -5,7 +5,7 @@
  * 横長画面では左に縦線、縦長画面では下に横線 (§5.1)。
  * 直接モードでは f0 と音域をドラッグで指定できる (§2.1, §2.2)。
  * アルペジオモード (§6.7) ではドラッグは無効になり、代わりにボイシング結果の
- * ノートをタッチするとそのノートの発音を開始する。
+ * ノートをタッチしている間そのノートが発音される (§6.7 の OR の項になる)。
  * 当たり判定とドラッグの数式は lib/pitch_line.ts の純粋関数に置き、
  * ここでは pointer イベントの配線だけを行う。
  */
@@ -26,7 +26,7 @@ import { F0_MAX_HZ, F0_MIN_HZ } from "../lib/settings.ts";
 import { voicedNoteKey } from "../lib/voicing.ts";
 import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
-import { soundingAtom } from "../state/sounding.ts";
+import { glideHeldAtom, heldNoteKeysAtom, rhythmHeldAtom } from "../state/sounding.ts";
 import { voicingAtom } from "../state/voicing.ts";
 
 /** ハンドルの当たり判定の許容距離 (px)。指でつかめる程度に広く */
@@ -34,6 +34,15 @@ const GRAB_TOLERANCE_PX = 14;
 
 /** ノートタッチ (§6.7) の当たり判定の許容距離 (px)。叩く操作なのでさらに広く */
 const NOTE_TOLERANCE_PX = 20;
+
+const capturePointer = (e: React.PointerEvent<SVGSVGElement>): void => {
+  // 合成イベント (テスト) では capture に失敗してよい
+  try {
+    e.currentTarget.setPointerCapture(e.pointerId);
+  } catch {
+    // noop
+  }
+};
 
 /** 位置 → SVG 座標 (%)。縦線では上が高音、横線では右が高音 */
 const toPercent = (fraction: number, isLandscape: boolean): string =>
@@ -71,8 +80,10 @@ export const PitchLine = () => {
   const updateSettings = useSetAtom(settingsAtom);
   const isLandscape = useAtomValue(isLandscapeAtom);
   const voicing = useAtomValue(voicingAtom);
-  const sounding = useAtomValue(soundingAtom);
-  const setSounding = useSetAtom(soundingAtom);
+  const rhythmHeld = useAtomValue(rhythmHeldAtom);
+  const glideHeld = useAtomValue(glideHeldAtom);
+  const heldNotes = useAtomValue(heldNoteKeysAtom);
+  const setHeldNotes = useSetAtom(heldNoteKeysAtom);
   const { f0Hz } = settings;
   const isArpeggio = settings.playMode === "arpeggio";
 
@@ -101,7 +112,7 @@ export const PitchLine = () => {
     const point = eventHz(e);
     if (point === null) return;
     if (isArpeggio) {
-      // ノートタッチで発音開始 (§6.7)。f0・音域のドラッグはこのモードでは無効
+      // タッチしている間ノートを発音する (§6.7)。f0・音域のドラッグはこのモードでは無効
       ensureAudioReady();
       const notes = voicing?.notes ?? [];
       const idx = nearestIndexWithin(
@@ -110,23 +121,16 @@ export const PitchLine = () => {
         NOTE_TOLERANCE_PX * point.octPerPx,
       );
       const note = idx >= 0 ? notes[idx] : undefined;
-      if (note !== undefined) {
-        const key = voicedNoteKey(note);
-        setSounding((prev) =>
-          prev.noteKeys.has(key) ? prev : { ...prev, noteKeys: new Set([...prev.noteKeys, key]) }
-        );
-      }
+      if (note === undefined) return;
+      const key = voicedNoteKey(note);
+      setHeldNotes((prev) => new Map(prev).set(e.pointerId, key));
+      capturePointer(e);
       return;
     }
     const drag = pickPitchDrag(settingsRef.current, point.hz, GRAB_TOLERANCE_PX * point.octPerPx);
     if (drag === null) return;
     dragRef.current = { ...drag, pointerId: e.pointerId };
-    // 合成イベント (テスト) では capture に失敗してよい
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // noop
-    }
+    capturePointer(e);
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>): void => {
@@ -139,6 +143,12 @@ export const PitchLine = () => {
 
   const onPointerEnd = (e: React.PointerEvent<SVGSVGElement>): void => {
     if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
+    setHeldNotes((prev) => {
+      if (!prev.has(e.pointerId)) return prev;
+      const next = new Map(prev);
+      next.delete(e.pointerId);
+      return next;
+    });
   };
 
   const bands: readonly Band[] = [
@@ -217,13 +227,13 @@ export const PitchLine = () => {
             </g>
           );
       })()}
-      {/* ボイシング結果 (§7.5)。アルペジオモードでは発音指定されていないノートを淡く描く */}
+      {/* ボイシング結果 (§7.5)。アルペジオモードでは発音されていないノートを淡く描く */}
       {voicing?.notes.map((v, i) => {
         const hz = f0Hz * v.finalRatio;
         if (hz < F0_MIN_HZ || hz > F0_MAX_HZ) return null;
         const pos = toPercent(logFraction(hz), isLandscape);
-        const isSounding = !isArpeggio || sounding.all ||
-          sounding.noteKeys.has(voicedNoteKey(v));
+        const isSounding = !isArpeggio || rhythmHeld || glideHeld ||
+          [...heldNotes.values()].includes(voicedNoteKey(v));
         const className = [
           "voiced-note",
           v.isBassRange ? "voiced-bass" : "",
