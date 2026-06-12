@@ -55,6 +55,29 @@ const clamp = (x: number, min: number, max: number): number => Math.min(max, Mat
 
 const octDistance = (aHz: number, bHz: number): number => Math.abs(Math.log2(aHz) - Math.log2(bHz));
 
+/**
+ * hz から log2 距離 tolOct 以内で最も近い候補の添字。なければ -1。
+ * アルペジオモード (§6.7) のノートタッチの当たり判定に使う。
+ */
+export const nearestIndexWithin = (
+  candidatesHz: readonly number[],
+  hz: number,
+  tolOct: number,
+): number => {
+  let best = -1;
+  let bestDist = tolOct;
+  for (let i = 0; i < candidatesHz.length; i++) {
+    const c = candidatesHz[i];
+    if (c === undefined || !(c > 0)) continue;
+    const dist = octDistance(c, hz);
+    if (dist <= bestDist) {
+      best = i;
+      bestDist = dist;
+    }
+  }
+  return best;
+};
+
 const grab = (kind: PitchDragKind, anchorHz: number, hz: number): PitchDrag => ({
   kind,
   grabLog2: Math.log2(anchorHz) - Math.log2(hz),

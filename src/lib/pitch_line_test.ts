@@ -4,6 +4,7 @@ import {
   applyPitchDrag,
   fractionToHz,
   logFraction,
+  nearestIndexWithin,
   pickPitchDrag,
   type PitchDragKind,
 } from "./pitch_line.ts";
@@ -151,5 +152,26 @@ Deno.test("可動範囲内ではハンドルはつかんだ点に正確に追従
       const update = applyPitchDrag(s, { kind: "midMax", grabLog2: 0 }, hz);
       assert(relClose(update.midMaxRatio ?? NaN, target));
     }),
+  );
+});
+
+Deno.test("nearestIndexWithin: 許容距離内で log2 距離が最小の候補を返す", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.double({ min: F0_MIN_HZ, max: F0_MAX_HZ, noNaN: true }), { maxLength: 10 }),
+      fc.double({ min: F0_MIN_HZ, max: F0_MAX_HZ, noNaN: true }),
+      fc.double({ min: 0.001, max: 1, noNaN: true }),
+      (candidates, hz, tolOct) => {
+        const dist = (c: number) => Math.abs(Math.log2(c) - Math.log2(hz));
+        const idx = nearestIndexWithin(candidates, hz, tolOct);
+        if (idx === -1) {
+          assert(candidates.every((c) => dist(c) > tolOct));
+        } else {
+          const c = candidates[idx] ?? NaN;
+          assert(dist(c) <= tolOct);
+          assert(candidates.every((other) => dist(c) <= dist(other)));
+        }
+      },
+    ),
   );
 });

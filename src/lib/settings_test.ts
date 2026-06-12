@@ -7,6 +7,7 @@ import {
   F0_MAX_HZ,
   F0_MIN_HZ,
   NOTE_MOVE_MODES,
+  PLAY_MODES,
   sanitizeSettings,
   type Settings,
   TIMBRES,
@@ -38,6 +39,7 @@ const assertValidSettings = (s: Settings): void => {
   assert(inRange(s.reverb.mix, 0, 1));
   assert(inRange(s.reverb.decaySec, 0, 10));
   assert((CHORD_TRANSITION_MODES as readonly string[]).includes(s.chordTransitionMode));
+  assert((PLAY_MODES as readonly string[]).includes(s.playMode));
 };
 
 /** 不変条件を満たす Settings を生成する (音域は制約に従い段階的に決める) */
@@ -65,6 +67,7 @@ const arbValidSettings: fc.Arbitrary<Settings> = fc
       decaySec: fc.double({ min: 0, max: 10, noNaN: true }),
     }),
     chordTransitionMode: fc.constantFrom(...CHORD_TRANSITION_MODES),
+    playMode: fc.constantFrom(...PLAY_MODES),
   })
   .chain((s) =>
     fc

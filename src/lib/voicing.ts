@@ -46,6 +46,10 @@ export type Voicing = Readonly<{
   cost: number;
 }>;
 
+/** ボイシング後ノートの同一性キー。アルペジオモードの発音指定 (§6.7) に使う */
+export const voicedNoteKey = (v: VoicedNote): string =>
+  `${v.isBassRange ? "b" : "m"}:${v.finalRatio}`;
+
 /** r * 2^n が [min, max] に入る整数 n を列挙する */
 export const octaveCandidates = (r: number, min: number, max: number): readonly number[] => {
   if (!(r > 0) || !(min > 0) || !(max >= min)) return [];

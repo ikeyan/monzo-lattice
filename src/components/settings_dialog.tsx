@@ -10,12 +10,10 @@ import {
   F0_MIN_HZ,
   NOTE_MOVE_MODES,
   type NoteMoveMode,
-  type Timbre,
-  TIMBRES,
 } from "../lib/settings.ts";
 import { resetSettingsAtom, settingsAtom } from "../state/settings.ts";
 import { settingsOpenAtom } from "../state/ui.ts";
-import { TIMBRE_ICONS, TIMBRE_NAMES } from "./header.tsx";
+import { TimbreSelector } from "./timbre_icons.tsx";
 
 const TRANSITION_LABELS: Readonly<Record<ChordTransitionMode, string>> = {
   independent: "つながりを考慮しない",
@@ -233,16 +231,13 @@ export const SettingsDialog = () => {
         </Row>
 
         <h3>音 (§8)</h3>
-        <Row label="音色">
-          <select
+        <div className="settings-row">
+          <span>音色</span>
+          <TimbreSelector
             value={settings.timbre}
-            onChange={(e) => updateSettings({ timbre: e.currentTarget.value as Timbre })}
-          >
-            {TIMBRES.map((t) => (
-              <option key={t} value={t}>{TIMBRE_ICONS[t]} {TIMBRE_NAMES[t]}</option>
-            ))}
-          </select>
-        </Row>
+            onChange={(timbre) => updateSettings({ timbre })}
+          />
+        </div>
         <Row label="アタック (ms)">
           <NumberField
             value={adsr.attackMs}
