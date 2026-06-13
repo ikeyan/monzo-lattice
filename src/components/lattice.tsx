@@ -187,13 +187,15 @@ export const Lattice = () => {
         at: performance.now(),
       })),
     );
-    const up$ = merge(
-      fromEvent<PointerEvent>(el, "pointerup"),
-      fromEvent<PointerEvent>(el, "pointercancel"),
-    ).pipe(
+    const up$ = fromEvent<PointerEvent>(el, "pointerup").pipe(
       map((e): GestureEvent => ({ type: "up", pointerId: e.pointerId, at: performance.now() })),
     );
-    const events$ = merge(down$, move$, up$, tick$, gestureBus);
+    // pointercancel は up ではなく cancel にする。アルペジオモードで未移動の指が
+    // OS にキャンセルされてもトグルしない (直接モードでは cancel ≡ up で発音を止める)
+    const cancel$ = fromEvent<PointerEvent>(el, "pointercancel").pipe(
+      map((e): GestureEvent => ({ type: "cancel", pointerId: e.pointerId, at: performance.now() })),
+    );
+    const events$ = merge(down$, move$, up$, cancel$, tick$, gestureBus);
 
     let timer: number | undefined;
 
