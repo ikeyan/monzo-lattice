@@ -1,11 +1,14 @@
 /**
- * monzo 格子 (仕様 §3) とジェスチャ (§6)、豆の表示 (§4) の配線。
+ * monzo 格子 (仕様 §3) とタッチ処理 (§6)、豆の表示 (§4) の配線。
  *
- * 格子のタッチは monzo の存在をトグルする永続的な和音編集 (§6)。pointer
- * イベントを RxJS で集め、純粋な認識機械 reduceLatticeGesture (lib/lattice_gesture.ts)
- * に畳み込んでアクション (トグル・底音化・移動・平行移動) とパン量を得て、
- * chord_edit で chordAtom を更新する。ロングタップ期限は longPressAt に合わせて
- * tick を注入する。豆の D&D (§4.2) の昇格は gestureBus 経由で指のタップを取り消す。
+ * 格子の操作は演奏モード (§6.7) で変わる:
+ * - 直接モード: 触れて即発音。バッチ機械 reduceGesture (lib/touch.ts) に畳み込んで
+ *   発音中の和音をそのまま chordAtom に書く (ephemeral)。
+ * - アルペジオモード: monzo の存在をトグルする永続的な和音編集。認識機械
+ *   reduceLatticeGesture (lib/lattice_gesture.ts) のアクションを chord_edit で適用する。
+ *
+ * どちらも pointer イベントを RxJS で集め、ジオメトリ・設定・盤面は ref 経由で
+ * イベント時点の最新値を使う。豆の D&D (§4.2) の合成イベントは gestureBus 経由。
  */
 
 import { useAtomValue, useSetAtom } from "jotai";
@@ -23,7 +26,6 @@ import {
 import {
   INITIAL_LATTICE_GESTURE,
   type LatticeGestureConfig,
-  type LatticeGestureEvent,
   reduceLatticeGesture,
 } from "../lib/lattice_gesture.ts";
 import {
@@ -33,7 +35,16 @@ import {
   visibleCells,
 } from "../lib/lattice_view.ts";
 import { cellMonzo, formatMonzo } from "../lib/monzo.ts";
-import { CELL_MOVE_MARGIN, sameCell, sameTarget } from "../lib/touch.ts";
+import {
+  CELL_MOVE_MARGIN,
+  type Chord,
+  type GestureConfig,
+  type GestureEvent,
+  INITIAL_GESTURE,
+  reduceGesture,
+  sameCell,
+  sameTarget,
+} from "../lib/touch.ts";
 import { chordToVoicingInput, solveVoicingTransition } from "../lib/voicing.ts";
 import { beanBoardAtom, beanDragAtom, beanDragCandidateAtom } from "../state/beans.ts";
 import { chordAtom } from "../state/chord.ts";
@@ -44,7 +55,7 @@ import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
 import { voicingAtom } from "../state/voicing.ts";
 
-/** ロングタップ (底音化 §6) とみなす押下時間 (ms) */
+/** ロングタップ (底音化 §6.3) とみなす押下時間 (ms) */
 const LONG_PRESS_MS = 450;
 /** スライド開始とみなす移動距離 (px) */
 const SLOP_PX = 8;
@@ -65,11 +76,20 @@ export const Lattice = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
+  const playMode = settings.playMode;
   const cellSizePx = settings.cellSizeCm * CSS_PX_PER_CM;
   const geo: ViewGeometry = { ...size, cellSizePx, pan, isWide };
 
-  // イベント時点の最新の和音・設定・ジオメトリ・盤面を参照するための ref
-  const config: LatticeGestureConfig = {
+  // イベント時点の最新の設定・ジオメトリ・盤面・和音を参照するための ref
+  const directConfig: GestureConfig = {
+    batchMs: settings.batchPeriodMs,
+    panThresholdPx: settings.panThresholdCm * CSS_PX_PER_CM,
+    marginFrac: CELL_MOVE_MARGIN,
+    geo,
+  };
+  const directConfigRef = useRef(directConfig);
+  directConfigRef.current = directConfig;
+  const arpConfig: LatticeGestureConfig = {
     geo,
     marginFrac: CELL_MOVE_MARGIN,
     longPressMs: LONG_PRESS_MS,
@@ -79,8 +99,8 @@ export const Lattice = () => {
       chord?.notes.some((n) => n.target.x3 === x3 && n.target.yp === yp) ?? false,
     isBass: (t) => chord !== null && sameTarget(chord.bass, t),
   };
-  const configRef = useRef(config);
-  configRef.current = config;
+  const arpConfigRef = useRef(arpConfig);
+  arpConfigRef.current = arpConfig;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const boardRef = useRef(board);
@@ -114,14 +134,16 @@ export const Lattice = () => {
   useEffect(() => {
     const el = containerRef.current;
     if (el === null) return;
+    // モード切り替え時は前モードの和音を破棄する (直接の発音中和音・アルペジオの編集中和音)
+    setChord(null);
 
     const relative = (e: PointerEvent): { x: number; y: number } => {
       const rect = el.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
-    const tick$ = new Subject<LatticeGestureEvent>();
+    const tick$ = new Subject<GestureEvent>();
     const down$ = fromEvent<PointerEvent>(el, "pointerdown").pipe(
-      map((e): LatticeGestureEvent => {
+      map((e): GestureEvent => {
         // 合成イベント (テスト) では capture に失敗してよい
         try {
           el.setPointerCapture(e.pointerId);
@@ -132,7 +154,7 @@ export const Lattice = () => {
         const point = relative(e);
         const s = settingsRef.current;
         const target = targetAtPoint(
-          configRef.current.geo,
+          directConfigRef.current.geo,
           boardRef.current,
           s.latticePrime,
           s.cellSizeCm,
@@ -153,13 +175,12 @@ export const Lattice = () => {
       }),
     );
     const move$ = fromEvent<PointerEvent>(el, "pointermove").pipe(
-      // 豆の D&D に昇格した指・昇格しうる候補の指の生 move は無視する (§4.2)。
-      // 豆の移動は BeanDragLayer が盤面を編集する
+      // 豆の D&D に昇格した指・昇格しうる候補の指の生 move は無視する (§4.2)
       filter((e) =>
         beanDragRef.current?.pointerId !== e.pointerId &&
         beanCandidateRef.current?.pointerId !== e.pointerId
       ),
-      map((e): LatticeGestureEvent => ({
+      map((e): GestureEvent => ({
         type: "move",
         pointerId: e.pointerId,
         ...relative(e),
@@ -170,18 +191,49 @@ export const Lattice = () => {
       fromEvent<PointerEvent>(el, "pointerup"),
       fromEvent<PointerEvent>(el, "pointercancel"),
     ).pipe(
-      map((e): LatticeGestureEvent => ({
-        type: "up",
-        pointerId: e.pointerId,
-        at: performance.now(),
-      })),
+      map((e): GestureEvent => ({ type: "up", pointerId: e.pointerId, at: performance.now() })),
     );
+    const events$ = merge(down$, move$, up$, tick$, gestureBus);
 
     let timer: number | undefined;
-    const subscription = merge(down$, move$, up$, tick$, gestureBus)
+
+    if (playMode === "direct") {
+      // 直接モード: バッチ機械の発音中和音をそのまま書く (§6.2)
+      let lastCommitted: Chord | null = null;
+      const subscription = events$
+        .pipe(
+          scan<GestureEvent, ReturnType<typeof reduceGesture>>(
+            (acc, ev) => reduceGesture(acc.state, ev, directConfigRef.current),
+            { state: INITIAL_GESTURE, panDelta: null },
+          ),
+        )
+        .subscribe(({ state, panDelta }) => {
+          if (panDelta !== null) {
+            setPan((prev) =>
+              applyPanDelta(prev, panDelta.dx, panDelta.dy, directConfigRef.current.geo.isWide)
+            );
+          }
+          if (state.committed !== lastCommitted) {
+            lastCommitted = state.committed;
+            setChord(state.committed);
+          }
+          clearTimeout(timer);
+          if (state.windowEndsAt !== null) {
+            const delay = Math.max(0, state.windowEndsAt - performance.now());
+            timer = setTimeout(() => tick$.next({ type: "tick", at: performance.now() }), delay);
+          }
+        });
+      return () => {
+        subscription.unsubscribe();
+        clearTimeout(timer);
+      };
+    }
+
+    // アルペジオモード: monzo の存在をトグルする永続的な和音編集 (§6.8)
+    const subscription = events$
       .pipe(
         scan(
-          (acc, ev) => reduceLatticeGesture(acc.state, ev, configRef.current),
+          (acc, ev) => reduceLatticeGesture(acc.state, ev, arpConfigRef.current),
           { state: INITIAL_LATTICE_GESTURE, actions: [], panDelta: null } as ReturnType<
             typeof reduceLatticeGesture
           >,
@@ -200,9 +252,7 @@ export const Lattice = () => {
               break;
             case "optimizeBass": {
               const s = settingsRef.current;
-              setChord((
-                c,
-              ) => (c === null ? c : setBass(c, optimalBassTarget(c, s.latticePrime, s))));
+              setChord((c) => c === null ? c : setBass(c, optimalBassTarget(c, s.latticePrime, s)));
               break;
             }
             case "moveNote":
@@ -215,7 +265,7 @@ export const Lattice = () => {
         }
         if (panDelta !== null) {
           setPan((prev) =>
-            applyPanDelta(prev, panDelta.dx, panDelta.dy, configRef.current.geo.isWide)
+            applyPanDelta(prev, panDelta.dx, panDelta.dy, arpConfigRef.current.geo.isWide)
           );
         }
         clearTimeout(timer);
@@ -228,7 +278,7 @@ export const Lattice = () => {
       subscription.unsubscribe();
       clearTimeout(timer);
     };
-  }, [setPan, setChord, setBeanCandidate]);
+  }, [playMode, setPan, setChord, setBeanCandidate]);
 
   // ボイシング (§7) は和音と設定から導く。和音の変化だけでなく、発音中の
   // 設定変更 (p・音域・音色・f0 等) にも追従する。遷移は前回の結果を参照 (§7.4)
