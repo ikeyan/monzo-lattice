@@ -2,10 +2,11 @@
  * 豆のドラッグ&ドロップ (仕様 §4.2)。
  *
  * - パレット → セル: コピー / セル → セル: 移動 / セル → 格子の外: 削除
- * - セル上の豆へのタッチはまず和音 (§4.4) になり、閾値を超えて動いたら
- *   ドラッグに昇格する (合成 up で和音から外す)
- * - ドラッグ中に豆が完全にセル内へ入ったら、合成 down (豆つき対象) を
- *   ジェスチャ機械に注入して発音し (§4.2)、出たら合成 up で止める
+ * - セル上の豆へのタッチは、直接モードでは和音 (§6.2)、アルペジオモードでは
+ *   タップ/ロングタップ (§6) の候補になり、閾値を超えて動いたらドラッグに
+ *   昇格する。昇格時は合成 up でその指の発音/編集を取り消す。
+ * - 直接モードでは、ドラッグ中に豆が完全にセル内へ入ったら合成 down (豆つき対象)
+ *   を注入して発音し (§4.2)、出たら合成 up で止める。
  */
 
 import { useAtomValue, useSetAtom } from "jotai";
@@ -30,7 +31,7 @@ export const BeanDragLayer = () => {
   viewRef.current = view;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  /** ドラッグ中の豆が完全に入っているセル (合成 down 済み) */
+  /** 直接モードでドラッグ中の豆が完全に入っているセル (合成 down 済み) */
   const containedRef = useRef<TouchTarget | null>(null);
 
   // セルの豆に触れた指がドラッグへ昇格するかを監視する
@@ -40,7 +41,10 @@ export const BeanDragLayer = () => {
     const onMove = (e: PointerEvent) => {
       if (e.pointerId !== candidate.pointerId) return;
       if (Math.hypot(e.clientX - candidate.startX, e.clientY - candidate.startY) > threshold) {
-        gestureBus.next({ type: "up", pointerId: candidate.pointerId, at: performance.now() });
+        // 昇格: この指のタップ/ロングタップ (アルペジオ) や発音 (直接) を取り消す。
+        // cancel は単なる up と違いトグルを起こさないので、豆ドラッグの開始だけで
+        // 和音が変わってしまうのを防ぐ (§4.2)
+        gestureBus.next({ type: "cancel", pointerId: candidate.pointerId, at: performance.now() });
         setDrag({
           pointerId: candidate.pointerId,
           prime: candidate.prime,
@@ -84,6 +88,8 @@ export const BeanDragLayer = () => {
     const onMove = (e: PointerEvent) => {
       if (e.pointerId !== drag.pointerId) return;
       setDrag({ ...drag, x: e.clientX, y: e.clientY });
+      // 直接モードのみ: 豆が完全にセルへ入ったら発音する (§4.2)
+      if (settingsRef.current.playMode !== "direct") return;
       const p = relativePoint(e);
       const contained = insideLattice(p)
         ? beanFullyInsideCell(viewRef.current.geo, settingsRef.current.cellSizeCm, p.x, p.y)

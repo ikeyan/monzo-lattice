@@ -1,9 +1,11 @@
 /**
- * タッチ処理の純粋ロジック (仕様 §6)。
+ * 直接モードのタッチ処理の純粋ロジック (仕様 §6.2)。
  *
- * pointer イベント列 (タイムスタンプ付き) を畳み込む状態機械。時刻は
+ * 直接モードでは格子のタッチがそのまま発音される。pointer イベント列
+ * (タイムスタンプ付き) を畳み込む状態機械。時刻は
  * イベントの引数で受け取り、バッチ期限のタイマーは呼び出し側 (RxJS アダプタ) が
  * windowEndsAt に合わせて tick イベントを注入する。
+ * (アルペジオモードのトグル編集は lattice_gesture.ts / chord_edit.ts)
  *
  * - バッチ化 (§6.2): 和音 (ボイシング前 = 構成 monzo の集合と底音) を変える最初の
  *   イベントから batchMs の間、変更を保留する。down/up もセル移動も等しく対象。
@@ -90,6 +92,8 @@ export type GestureEvent =
   >
   | Readonly<{ type: "move"; pointerId: number; x: number; y: number; at: number }>
   | Readonly<{ type: "up"; pointerId: number; at: number }>
+  // cancel は up と同じく指を外す (豆が D&D に昇格したときの取り消しに使う §4.2)
+  | Readonly<{ type: "cancel"; pointerId: number; at: number }>
   | Readonly<{ type: "tick"; at: number }>;
 
 export type GestureConfig = Readonly<{
@@ -316,6 +320,9 @@ export const reduceGesture = (
       return onDown(state, event, config);
     case "up":
       return onUp(state, event, config);
+    case "cancel":
+      // 直接モードでは取り消しも up と同じく指を外す (発音中なら止まる)
+      return onUp(state, { type: "up", pointerId: event.pointerId, at: event.at }, config);
     case "move":
       return onMove(state, event, config);
     case "tick":
