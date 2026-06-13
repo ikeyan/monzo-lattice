@@ -2,17 +2,14 @@
  * 豆のドラッグ&ドロップ (仕様 §4.2)。
  *
  * - パレット → セル: コピー / セル → セル: 移動 / セル → 格子の外: 削除
- * - セル上の豆へのタッチはまず和音 (§4.4) になり、閾値を超えて動いたら
- *   ドラッグに昇格する (合成 up で和音から外す)
- * - ドラッグ中に豆が完全にセル内へ入ったら、合成 down (豆つき対象) を
- *   ジェスチャ機械に注入して発音し (§4.2)、出たら合成 up で止める
+ * - セル上の豆へのタッチはまずタップ/ロングタップの候補になり (§6)、閾値を超えて
+ *   動いたらドラッグに昇格する。昇格時は合成 up でその指の和音編集を取り消す。
  */
 
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useRef } from "react";
-import { addBean, beanCapacity, beanFullyInsideCell, moveBean, removeBean } from "../lib/beans.ts";
+import { addBean, beanCapacity, moveBean, removeBean } from "../lib/beans.ts";
 import { cellAtPoint, CSS_PX_PER_CM } from "../lib/lattice_view.ts";
-import { sameCell, type TouchTarget } from "../lib/touch.ts";
 import { beanBoardAtom, beanDragAtom, beanDragCandidateAtom } from "../state/beans.ts";
 import { gestureBus } from "../state/gesture_bus.ts";
 import { latticeViewAtom } from "../state/lattice_view.ts";
@@ -30,8 +27,6 @@ export const BeanDragLayer = () => {
   viewRef.current = view;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  /** ドラッグ中の豆が完全に入っているセル (合成 down 済み) */
-  const containedRef = useRef<TouchTarget | null>(null);
 
   // セルの豆に触れた指がドラッグへ昇格するかを監視する
   useEffect(() => {
@@ -40,6 +35,7 @@ export const BeanDragLayer = () => {
     const onMove = (e: PointerEvent) => {
       if (e.pointerId !== candidate.pointerId) return;
       if (Math.hypot(e.clientX - candidate.startX, e.clientY - candidate.startY) > threshold) {
+        // 昇格: この指のタップ/ロングタップを取り消す (§6)
         gestureBus.next({ type: "up", pointerId: candidate.pointerId, at: performance.now() });
         setDrag({
           pointerId: candidate.pointerId,
@@ -67,12 +63,6 @@ export const BeanDragLayer = () => {
   // ドラッグ本体
   useEffect(() => {
     if (drag === null) return;
-    const releaseContained = () => {
-      if (containedRef.current !== null) {
-        gestureBus.next({ type: "up", pointerId: drag.pointerId, at: performance.now() });
-        containedRef.current = null;
-      }
-    };
     const relativePoint = (e: PointerEvent) => {
       const { originX, originY } = viewRef.current;
       return { x: e.clientX - originX, y: e.clientY - originY };
@@ -84,28 +74,9 @@ export const BeanDragLayer = () => {
     const onMove = (e: PointerEvent) => {
       if (e.pointerId !== drag.pointerId) return;
       setDrag({ ...drag, x: e.clientX, y: e.clientY });
-      const p = relativePoint(e);
-      const contained = insideLattice(p)
-        ? beanFullyInsideCell(viewRef.current.geo, settingsRef.current.cellSizeCm, p.x, p.y)
-        : null;
-      const prev = containedRef.current;
-      if (prev !== null && contained !== null && sameCell(prev, contained)) return;
-      releaseContained();
-      if (contained !== null) {
-        gestureBus.next({
-          type: "down",
-          pointerId: drag.pointerId,
-          x: p.x,
-          y: p.y,
-          at: performance.now(),
-          target: { ...contained, bean: drag.prime },
-        });
-        containedRef.current = contained;
-      }
     };
     const onUp = (e: PointerEvent) => {
       if (e.pointerId !== drag.pointerId) return;
-      releaseContained();
       const p = relativePoint(e);
       const s = settingsRef.current;
       const capacity = beanCapacity(s.cellSizeCm);
@@ -124,7 +95,6 @@ export const BeanDragLayer = () => {
     };
     const onCancel = (e: PointerEvent) => {
       if (e.pointerId !== drag.pointerId) return;
-      releaseContained();
       setDrag(null);
     };
     globalThis.addEventListener("pointermove", onMove);

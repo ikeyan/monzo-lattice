@@ -1,11 +1,11 @@
 /**
- * ジェスチャ状態機械への合成イベントの注入口。
+ * 格子ジェスチャ機械への合成イベントの注入口。
  *
- * 豆の D&D (§4.2) が「ドラッグ中の豆がセルに完全に入った/出た」を
- * down/up イベントとして注入し、通常のタッチと同じバッチ化・底音規則で発音させる。
+ * 豆がドラッグ (§4.2) に昇格したとき、その指のタップ/ロングタップを取り消すため
+ * 合成 up を注入する (豆はドラッグ中、和音編集の対象から外れる)。
  */
 
 import { Subject } from "rxjs";
-import type { GestureEvent } from "../lib/touch.ts";
+import type { LatticeGestureEvent } from "../lib/lattice_gesture.ts";
 
-export const gestureBus = new Subject<GestureEvent>();
+export const gestureBus = new Subject<LatticeGestureEvent>();

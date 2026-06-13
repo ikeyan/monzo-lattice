@@ -1,10 +1,11 @@
 /**
- * monzo 格子 (仕様 §3) とタッチ処理 (§6)、豆の表示 (§4) の配線。
+ * monzo 格子 (仕様 §3) とジェスチャ (§6)、豆の表示 (§4) の配線。
  *
- * pointer イベントを RxJS で集め、純粋な状態機械 reduceGesture (lib/touch.ts) に
- * 畳み込む。バッチ期限は windowEndsAt に合わせて tick イベントを注入する。
- * 豆の D&D (§4.2) からの合成イベントは gestureBus 経由で同じ機械に流れ込む。
- * 設定やジオメトリは ref 経由でイベント時点の最新値を使う。
+ * 格子のタッチは monzo の存在をトグルする永続的な和音編集 (§6)。pointer
+ * イベントを RxJS で集め、純粋な認識機械 reduceLatticeGesture (lib/lattice_gesture.ts)
+ * に畳み込んでアクション (トグル・底音化・移動・平行移動) とパン量を得て、
+ * chord_edit で chordAtom を更新する。ロングタップ期限は longPressAt に合わせて
+ * tick を注入する。豆の D&D (§4.2) の昇格は gestureBus 経由で指のタップを取り消す。
  */
 
 import { useAtomValue, useSetAtom } from "jotai";
@@ -13,22 +14,26 @@ import { filter, fromEvent, map, merge, scan, Subject } from "rxjs";
 import { ensureAudioReady } from "../lib/audio.ts";
 import { beanPositionsCm, beansAt, effectiveBeans, targetAtPoint } from "../lib/beans.ts";
 import {
+  moveNote,
+  optimalBassTarget,
+  setBass,
+  toggleNote,
+  translateChord,
+} from "../lib/chord_edit.ts";
+import {
+  INITIAL_LATTICE_GESTURE,
+  type LatticeGestureConfig,
+  type LatticeGestureEvent,
+  reduceLatticeGesture,
+} from "../lib/lattice_gesture.ts";
+import {
   applyPanDelta,
   CSS_PX_PER_CM,
   type ViewGeometry,
   visibleCells,
 } from "../lib/lattice_view.ts";
 import { cellMonzo, formatMonzo } from "../lib/monzo.ts";
-import {
-  CELL_MOVE_MARGIN,
-  type Chord,
-  type GestureConfig,
-  type GestureEvent,
-  type GestureResult,
-  INITIAL_GESTURE,
-  reduceGesture,
-  sameCell,
-} from "../lib/touch.ts";
+import { CELL_MOVE_MARGIN, sameCell, sameTarget } from "../lib/touch.ts";
 import { chordToVoicingInput, solveVoicingTransition } from "../lib/voicing.ts";
 import { beanBoardAtom, beanDragAtom, beanDragCandidateAtom } from "../state/beans.ts";
 import { chordAtom } from "../state/chord.ts";
@@ -38,6 +43,11 @@ import { latticeViewAtom } from "../state/lattice_view.ts";
 import { isLandscapeAtom } from "../state/orientation.ts";
 import { settingsAtom } from "../state/settings.ts";
 import { voicingAtom } from "../state/voicing.ts";
+
+/** ロングタップ (底音化 §6) とみなす押下時間 (ms) */
+const LONG_PRESS_MS = 450;
+/** スライド開始とみなす移動距離 (px) */
+const SLOP_PX = 8;
 
 export const Lattice = () => {
   const settings = useAtomValue(settingsAtom);
@@ -58,19 +68,19 @@ export const Lattice = () => {
   const cellSizePx = settings.cellSizeCm * CSS_PX_PER_CM;
   const geo: ViewGeometry = { ...size, cellSizePx, pan, isWide };
 
-  // イベント時点の最新設定・ジオメトリ・盤面を参照するための ref
-  const configRef = useRef<GestureConfig>({
-    batchMs: settings.batchPeriodMs,
-    panThresholdPx: settings.panThresholdCm * CSS_PX_PER_CM,
-    marginFrac: CELL_MOVE_MARGIN,
+  // イベント時点の最新の和音・設定・ジオメトリ・盤面を参照するための ref
+  const config: LatticeGestureConfig = {
     geo,
-  });
-  configRef.current = {
-    batchMs: settings.batchPeriodMs,
-    panThresholdPx: settings.panThresholdCm * CSS_PX_PER_CM,
     marginFrac: CELL_MOVE_MARGIN,
-    geo,
+    longPressMs: LONG_PRESS_MS,
+    slopPx: SLOP_PX,
+    hasTarget: (t) => chord?.notes.some((n) => sameTarget(n.target, t)) ?? false,
+    cellHasMonzo: (x3, yp) =>
+      chord?.notes.some((n) => n.target.x3 === x3 && n.target.yp === yp) ?? false,
+    isBass: (t) => chord !== null && sameTarget(chord.bass, t),
   };
+  const configRef = useRef(config);
+  configRef.current = config;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const boardRef = useRef(board);
@@ -79,6 +89,7 @@ export const Lattice = () => {
   beanDragRef.current = beanDrag;
   const beanCandidateRef = useRef(beanCandidate);
   beanCandidateRef.current = beanCandidate;
+  const nextIdRef = useRef(1);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -108,9 +119,9 @@ export const Lattice = () => {
       const rect = el.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
-    const tick$ = new Subject<GestureEvent>();
+    const tick$ = new Subject<LatticeGestureEvent>();
     const down$ = fromEvent<PointerEvent>(el, "pointerdown").pipe(
-      map((e): GestureEvent => {
+      map((e): LatticeGestureEvent => {
         // 合成イベント (テスト) では capture に失敗してよい
         try {
           el.setPointerCapture(e.pointerId);
@@ -142,15 +153,13 @@ export const Lattice = () => {
       }),
     );
     const move$ = fromEvent<PointerEvent>(el, "pointermove").pipe(
-      // 豆の D&D に昇格した指、および昇格しうる候補の指の生 move は無視する。
-      // さもないと cellWithMargin が豆なしのセルを発音させてしまう
-      // (候補も除外するのは、閾値を跨ぐ move が BeanDragLayer の window リスナより
-      // 先に格子要素へ届くレースがあるため)。発音は §4.2 の合成 down/up が担う
+      // 豆の D&D に昇格した指・昇格しうる候補の指の生 move は無視する (§4.2)。
+      // 豆の移動は BeanDragLayer が盤面を編集する
       filter((e) =>
         beanDragRef.current?.pointerId !== e.pointerId &&
         beanCandidateRef.current?.pointerId !== e.pointerId
       ),
-      map((e): GestureEvent => ({
+      map((e): LatticeGestureEvent => ({
         type: "move",
         pointerId: e.pointerId,
         ...relative(e),
@@ -161,31 +170,57 @@ export const Lattice = () => {
       fromEvent<PointerEvent>(el, "pointerup"),
       fromEvent<PointerEvent>(el, "pointercancel"),
     ).pipe(
-      map((e): GestureEvent => ({ type: "up", pointerId: e.pointerId, at: performance.now() })),
+      map((e): LatticeGestureEvent => ({
+        type: "up",
+        pointerId: e.pointerId,
+        at: performance.now(),
+      })),
     );
 
     let timer: number | undefined;
-    let lastCommitted: Chord | null = null;
     const subscription = merge(down$, move$, up$, tick$, gestureBus)
       .pipe(
-        scan<GestureEvent, GestureResult>(
-          (acc, ev) => reduceGesture(acc.state, ev, configRef.current),
-          { state: INITIAL_GESTURE, panDelta: null },
+        scan(
+          (acc, ev) => reduceLatticeGesture(acc.state, ev, configRef.current),
+          { state: INITIAL_LATTICE_GESTURE, actions: [], panDelta: null } as ReturnType<
+            typeof reduceLatticeGesture
+          >,
         ),
       )
-      .subscribe(({ state, panDelta }) => {
+      .subscribe(({ state, actions, panDelta }) => {
+        for (const a of actions) {
+          switch (a.type) {
+            case "toggle": {
+              const id = nextIdRef.current++;
+              setChord((c) => toggleNote(c, a.target, id));
+              break;
+            }
+            case "setBass":
+              setChord((c) => (c === null ? c : setBass(c, a.target)));
+              break;
+            case "optimizeBass": {
+              const s = settingsRef.current;
+              setChord((
+                c,
+              ) => (c === null ? c : setBass(c, optimalBassTarget(c, s.latticePrime, s))));
+              break;
+            }
+            case "moveNote":
+              setChord((c) => (c === null ? c : moveNote(c, a.from, a.to)));
+              break;
+            case "translate":
+              setChord((c) => (c === null ? c : translateChord(c, a.dx3, a.dyp)));
+              break;
+          }
+        }
         if (panDelta !== null) {
           setPan((prev) =>
             applyPanDelta(prev, panDelta.dx, panDelta.dy, configRef.current.geo.isWide)
           );
         }
-        if (state.committed !== lastCommitted) {
-          lastCommitted = state.committed;
-          setChord(state.committed);
-        }
         clearTimeout(timer);
-        if (state.windowEndsAt !== null) {
-          const delay = Math.max(0, state.windowEndsAt - performance.now());
+        if (state.longPressAt !== null) {
+          const delay = Math.max(0, state.longPressAt - performance.now());
           timer = setTimeout(() => tick$.next({ type: "tick", at: performance.now() }), delay);
         }
       });
@@ -193,7 +228,7 @@ export const Lattice = () => {
       subscription.unsubscribe();
       clearTimeout(timer);
     };
-  }, [setPan, setChord, setVoicing, setBeanCandidate]);
+  }, [setPan, setChord, setBeanCandidate]);
 
   // ボイシング (§7) は和音と設定から導く。和音の変化だけでなく、発音中の
   // 設定変更 (p・音域・音色・f0 等) にも追従する。遷移は前回の結果を参照 (§7.4)
@@ -214,13 +249,17 @@ export const Lattice = () => {
   return (
     <div ref={containerRef} className="lattice">
       {cells.map((c) => {
-        const isActive = chord?.notes.some((n) => sameCell(n.target, c)) ?? false;
-        const isBass = chord !== null && sameCell(chord.bass, c);
+        // 平セル (豆なし) の構成音・底音だけをセルの強調に使う (豆は別に強調する)
+        const plainActive = chord?.notes.some((n) =>
+          n.target.bean === undefined && sameCell(n.target, c)
+        ) ?? false;
+        const plainBass = chord !== null && chord.bass.bean === undefined &&
+          sameCell(chord.bass, c);
         const classes = [
           "lattice-cell",
           c.x3 === 0 && c.yp === 0 ? "origin" : "",
-          isActive ? "active" : "",
-          isBass ? "bass" : "",
+          plainActive ? "active" : "",
+          plainBass ? "bass" : "",
         ].filter((s) => s !== "").join(" ");
         // ドラッグで持ち上げている豆は元のセルに描かない (§4.2 の移動)
         const beans = effectiveBeans(beansAt(board, c.x3, c.yp), settings.latticePrime)
@@ -239,10 +278,18 @@ export const Lattice = () => {
             {beans.map((q, i) => {
               const pos = positions[i];
               if (pos === undefined) return null;
+              const beanTarget = { x3: c.x3, yp: c.yp, bean: q };
+              const beanActive = chord?.notes.some((n) => sameTarget(n.target, beanTarget)) ??
+                false;
+              const beanBass = chord !== null && sameTarget(chord.bass, beanTarget);
+              const beanClass = ["bean", beanActive ? "active" : "", beanBass ? "bass" : ""]
+                .filter((s) =>
+                  s !== ""
+                ).join(" ");
               return (
                 <span
                   key={q}
-                  className="bean"
+                  className={beanClass}
                   style={{
                     left: pos.x * pxPerCm,
                     top: pos.y * pxPerCm,
