@@ -92,6 +92,8 @@ export type GestureEvent =
   >
   | Readonly<{ type: "move"; pointerId: number; x: number; y: number; at: number }>
   | Readonly<{ type: "up"; pointerId: number; at: number }>
+  // cancel は up と同じく指を外す (豆が D&D に昇格したときの取り消しに使う §4.2)
+  | Readonly<{ type: "cancel"; pointerId: number; at: number }>
   | Readonly<{ type: "tick"; at: number }>;
 
 export type GestureConfig = Readonly<{
@@ -318,6 +320,9 @@ export const reduceGesture = (
       return onDown(state, event, config);
     case "up":
       return onUp(state, event, config);
+    case "cancel":
+      // 直接モードでは取り消しも up と同じく指を外す (発音中なら止まる)
+      return onUp(state, { type: "up", pointerId: event.pointerId, at: event.at }, config);
     case "move":
       return onMove(state, event, config);
     case "tick":

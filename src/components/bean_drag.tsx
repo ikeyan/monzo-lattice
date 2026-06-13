@@ -41,8 +41,10 @@ export const BeanDragLayer = () => {
     const onMove = (e: PointerEvent) => {
       if (e.pointerId !== candidate.pointerId) return;
       if (Math.hypot(e.clientX - candidate.startX, e.clientY - candidate.startY) > threshold) {
-        // 昇格: この指のタップ/ロングタップを取り消す (§6)
-        gestureBus.next({ type: "up", pointerId: candidate.pointerId, at: performance.now() });
+        // 昇格: この指のタップ/ロングタップ (アルペジオ) や発音 (直接) を取り消す。
+        // cancel は単なる up と違いトグルを起こさないので、豆ドラッグの開始だけで
+        // 和音が変わってしまうのを防ぐ (§4.2)
+        gestureBus.next({ type: "cancel", pointerId: candidate.pointerId, at: performance.now() });
         setDrag({
           pointerId: candidate.pointerId,
           prime: candidate.prime,

@@ -15,7 +15,7 @@
  */
 
 import { cellWithMargin, sameCell, type TouchTarget } from "./touch.ts";
-import type { ViewGeometry } from "./lattice_view.ts";
+import { cellAtPoint, type ViewGeometry } from "./lattice_view.ts";
 
 export type LatticeGestureEvent =
   | Readonly<
@@ -23,6 +23,8 @@ export type LatticeGestureEvent =
   >
   | Readonly<{ type: "move"; pointerId: number; x: number; y: number; at: number }>
   | Readonly<{ type: "up"; pointerId: number; at: number }>
+  // cancel は指のタップ/ロングタップを取り消す (豆が D&D に昇格したとき §4.2)
+  | Readonly<{ type: "cancel"; pointerId: number; at: number }>
   | Readonly<{ type: "tick"; at: number }>;
 
 /** 和音の編集アクション (呼び出し側が chord_edit に適用する) */
@@ -68,18 +70,35 @@ type Ptr = Readonly<{
 }>;
 
 type Multi = Readonly<{
-  refId: number;
+  /** ジェスチャを成す 2 本の指。どちらの指が動いても重心で追従する */
+  ids: readonly number[];
   /** 二本指タップの底音化対象 (最初の指の開始 target) */
   anchorTarget: TouchTarget;
   /** ジェスチャが monzo の上で始まったか (真ならスライドで和音移動、偽ならパン) */
   onMonzo: boolean;
   mode: "undecided" | "chordMove" | "pan";
-  /** 和音移動用: 基準指の現在セル */
+  /** スライド開始判定の基準 (開始時の 2 指の重心) */
+  startX: number;
+  startY: number;
+  /** 和音移動用: 直近の重心セル */
   lastCell: Cell;
-  /** パン用: 基準指の現在位置 */
+  /** パン用: 直近の重心位置 */
   lastX: number;
   lastY: number;
 }>;
+
+/** 指 ids の重心 (現在位置) */
+const centroidOf = (
+  pointers: ReadonlyMap<number, Ptr>,
+  ids: readonly number[],
+): { cx: number; cy: number } => {
+  const ps = ids.map((id) => pointers.get(id)).filter((p): p is Ptr => p !== undefined);
+  const n = Math.max(1, ps.length);
+  return {
+    cx: ps.reduce((s, p) => s + p.curX, 0) / n,
+    cy: ps.reduce((s, p) => s + p.curY, 0) / n,
+  };
+};
 
 export type LatticeGestureState = Readonly<{
   pointers: ReadonlyMap<number, Ptr>;
@@ -152,16 +171,20 @@ const onDown = (
     const pointers = new Map<number, Ptr>();
     pointers.set(firstId, { ...first, consumed: true });
     pointers.set(event.pointerId, { ...ptr, consumed: true });
+    const cx = (first.curX + event.x) / 2;
+    const cy = (first.curY + event.y) / 2;
     return none({
       pointers,
       multi: {
-        refId: firstId,
+        ids: [firstId, event.pointerId],
         anchorTarget: first.startTarget,
         onMonzo,
         mode: "undecided",
-        lastCell: cellOf(first.startTarget),
-        lastX: first.curX,
-        lastY: first.curY,
+        startX: cx,
+        startY: cy,
+        lastCell: cellAtPoint(config.geo, cx, cy),
+        lastX: cx,
+        lastY: cy,
       },
       longPressAt: null,
     });
@@ -185,13 +208,14 @@ const onMove = (
   const moved = { ...ptr, curX: event.x, curY: event.y };
   const pointers = mapSet(state.pointers, event.pointerId, moved);
 
-  // 二本指ジェスチャ: 基準指の移動で和音移動またはパン
+  // 二本指ジェスチャ: どちらの指が動いても 2 指の重心で和音移動またはパン
   if (state.multi !== null) {
     const multi = state.multi;
-    if (event.pointerId !== multi.refId) return none({ ...state, pointers });
+    if (!multi.ids.includes(event.pointerId)) return none({ ...state, pointers });
+    const { cx, cy } = centroidOf(pointers, multi.ids);
     let mode = multi.mode;
     if (mode === "undecided") {
-      const farEnough = Math.hypot(event.x - moved.startX, event.y - moved.startY) > config.slopPx;
+      const farEnough = Math.hypot(cx - multi.startX, cy - multi.startY) > config.slopPx;
       if (!farEnough) return none({ ...state, pointers });
       mode = multi.onMonzo ? "chordMove" : "pan";
     }
@@ -199,8 +223,8 @@ const onMove = (
       const next = cellWithMargin(
         config.geo,
         { x3: multi.lastCell.x3, yp: multi.lastCell.yp },
-        event.x,
-        event.y,
+        cx,
+        cy,
         config.marginFrac,
       );
       if (sameCell(next, multi.lastCell)) {
@@ -221,10 +245,10 @@ const onMove = (
       state: {
         ...state,
         pointers,
-        multi: { ...multi, mode, lastX: event.x, lastY: event.y },
+        multi: { ...multi, mode, lastX: cx, lastY: cy },
       },
       actions: [],
-      panDelta: { dx: event.x - multi.lastX, dy: event.y - multi.lastY },
+      panDelta: { dx: cx - multi.lastX, dy: cy - multi.lastY },
     };
   }
 
@@ -298,11 +322,11 @@ const onUp = (
   const actions: LatticeAction[] = [];
   if (!ptr.consumed) {
     if (ptr.dragging && ptr.moved) {
+      // スライドが別セルで終わったら移動。元のセルに戻って終わったら何もしない
+      // (中断したドラッグで誤ってノートを消さない)
       const to: TouchTarget = { x3: ptr.destCell.x3, yp: ptr.destCell.yp };
       if (!sameCell(to, ptr.startTarget)) {
         actions.push({ type: "moveNote", from: ptr.startTarget, to });
-      } else {
-        actions.push({ type: "toggle", target: ptr.startTarget });
       }
     } else if (!ptr.moved) {
       actions.push({ type: "toggle", target: ptr.startTarget });
@@ -315,6 +339,31 @@ const onUp = (
     actions,
     panDelta: null,
   };
+};
+
+/** 取り消し: その指を外し、タップ/ロングタップを発火しない (§4.2 の豆 D&D 昇格) */
+const onCancel = (
+  state: LatticeGestureState,
+  event: Extract<LatticeGestureEvent, { type: "cancel" }>,
+): LatticeGestureResult => {
+  const ptr = state.pointers.get(event.pointerId);
+  const pointers = new Map(state.pointers);
+  pointers.delete(event.pointerId);
+  if (ptr === undefined) {
+    return none(pointers.size === 0 ? INITIAL_LATTICE_GESTURE : { ...state, pointers });
+  }
+  if (state.multi !== null && state.multi.ids.includes(event.pointerId)) {
+    // 二本指の片方が取り消されたらジェスチャ終了 (底音化はしない)
+    for (const [pid, p] of pointers) pointers.set(pid, { ...p, consumed: true });
+    return none(
+      pointers.size === 0 ? INITIAL_LATTICE_GESTURE : { pointers, multi: null, longPressAt: null },
+    );
+  }
+  return none(
+    pointers.size === 0
+      ? INITIAL_LATTICE_GESTURE
+      : { pointers, multi: state.multi, longPressAt: state.longPressAt },
+  );
 };
 
 const onTick = (
@@ -353,6 +402,8 @@ export const reduceLatticeGesture = (
       return onMove(state, event, config);
     case "up":
       return onUp(state, event, config);
+    case "cancel":
+      return onCancel(state, event);
     case "tick":
       return onTick(state, event, config);
   }
